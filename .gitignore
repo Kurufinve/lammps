@@ -41,9 +41,14 @@ Thumbs.db
 .lammps_history
 
 #cmake
+/cmake/out*
+/lib/*/out*
 /build*
 /CMakeCache.txt
 /CMakeFiles/
 /Makefile
 /cmake_install.cmake
 /lmp
+/unittest/out*
+/examples/*/*/out
+/.vs*
