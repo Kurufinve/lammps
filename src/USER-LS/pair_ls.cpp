@@ -255,10 +255,8 @@ void PairLS::compute(int eflag, int vflag)
   atom->map_init(1);
   atom->map_set();
 
-  // e_force_fi_emb(eflag, eatom, f, px_at, py_at, pz_at, x, type, nlocal, sizex, sizey, sizez);
   e_force_fi_emb(eflag, eatom, f, x, type, nlocal, sizex, sizey, sizez);
 
-  // if (if_g3_pot) e_force_g3(eflag, eatom, f, px_at, py_at, pz_at, x, type, nlocal, sizex, sizey, sizez);
   if (if_g3_pot) e_force_g3(eflag, eatom, f, x, type, nlocal, sizex, sizey, sizez);
 
   // neighbor list info
@@ -2114,8 +2112,8 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   double roi, roj, w, ropi, ropj, w1, w2, w3;
   int i1, i2, i3, iw;
 
-  // // Local Arrays
-  // double *rosum;
+  // Local Arrays
+  double *rosum_global, *rosum_global_proc;
 
   // pointers to LAMMPS arrays 
 
@@ -2143,8 +2141,11 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
   tagint *tag = atom->tag;
+  bigint nglobal = atom->natoms;
 
   memory->create(rosum, nall, "PairLS:rosum");
+  memory->create(rosum_global_proc, nglobal, "PairLS:rosum_global_proc");
+  memory->create(rosum_global, nglobal, "PairLS:rosum_global");
  
 
   sizex05 = sizex*0.5;
@@ -2164,9 +2165,14 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   }
   
  // set rosum = {0.0} as it was done for rho in pair_eam.cpp (182-184);
-  if (newton_pair) {
+  // if (newton_pair) {
     for (i = 0; i < nall; i++) rosum[i] = 0.0;
-  } else for (i = 0; i < nlocal; i++) rosum[i] = 0.0;
+  // } else for (i = 0; i < nlocal; i++) rosum[i] = 0.0;
+
+  for (i = 0; i < nglobal; i++) {
+    rosum_global_proc[i] = 0.0;
+    rosum_global[i] = 0.0;
+  }
 
   // == calc rosum(n_at) =========================>
 
@@ -2251,14 +2257,16 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   //   rosum[i] = funp_emb(rosum[i], i_sort_at[i]);
   //   // std::cout << "rosum[" << i+1 << "]_fi_emb = " << rosum[i] << std::endl;
   // }
-  for (i = 0; i < nall; i++)
+  // for (i = 0; i < nall; i++)
+  for (i = 0; i < nlocal; i++)
   {
-    if (i < nlocal) // set rosum for local atoms 
-    {
+    // if (i < nlocal) // set rosum for local atoms 
+    // {
       // std::cout << tag[i] << "  funp_emb( " << rosum[i] << " , " << i_sort_at[i]<< " ) = ";
-      rosum[i] = funp_emb(rosum[i], i_sort_at[i]);
+      rosum_global_proc[tag[i]-1] = funp_emb(rosum[i], i_sort_at[i]); // set rosum for global atom id's on this proc
+      rosum[i] = funp_emb(rosum[i], i_sort_at[i]); // set rosum for local atom id's 
       // std::cout << rosum[i] << std::endl;
-    }
+    // }
     // else // set rosum for ghost atoms 
     // {
     //   li = atom->map(tag[i]); // mapped local index of atom i
@@ -2268,9 +2276,16 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   }
   // !std::cout << "Finished calc funp_emb(n_at) and put one into rosum(n_at)C  " << std::endl;
 
-  if (newton_pair) comm->reverse_comm_pair(this);
+  // if (newton_pair) comm->reverse_comm_pair(this);
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(rosum_global_proc,rosum_global,nglobal,MPI_DOUBLE,MPI_SUM,world); // reducing global array with rosum
 
-
+  // if (comm->me == 0){
+  //   for (i = 0; i < nglobal; i++) {
+  //     std::cout << "rosum_global_proc["<<i+1<<"] = " << rosum_global_proc[i] << std::endl; 
+  //     std::cout << "rosum_global["<<i+1<<"] = " << rosum_global[i] << std::endl; 
+  //   }      
+  // }
   //c
   //c == calc forces: f_at(3,n_at) ==============================>
   // may be this is an unnessessarily cycle as these arrays should be zeroed earlier
@@ -2330,15 +2345,16 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
         {
           ropj = funp_ro(r, js, is);
         }
-        if (lj >= 0) 
-        {
-          w = ((rosum[i]*ropj + rosum[lj]*ropi) + funp_fi(r, is, js))*r1; // if j is a ghost atom which correspond to local atom on this proc
-        }
-        else 
-        {
-          // std::cout << " lj<=0
-          w = ((rosum[i]*ropj + rosum[j]*ropi) + funp_fi(r, is, js))*r1;  
-        }
+        // if (lj >= 0) 
+        // {
+        //   // std::cout << " i = " << tag[i] << " j = " << tag[j] << " lj = " << lj << std::endl;
+        //   w = ((rosum[i]*ropj + rosum[lj]*ropi) + funp_fi(r, is, js))*r1; // if j is a ghost atom which correspond to local atom on this proc
+        // }
+        // else 
+        // {
+          w = ((rosum[i]*ropj + rosum_global[tag[j]-1]*ropi) + funp_fi(r, is, js))*r1; // if j is a ghost atom atom which correspond to atom from other proc we take its rosum from the rosum_global array
+        // }
+        // if (comm->me == 0)  std::cout << " i = " << tag[i] << " j = " << tag[j] << std::endl;
         w1 = w*xx; 
         w2 = w*yy; 
         w3 = w*zz;
@@ -2398,6 +2414,8 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   // }
 
   memory->destroy(rosum);
+  memory->destroy(rosum_global);
+  memory->destroy(rosum_global_proc);
   return;
 }
 
@@ -2429,6 +2447,11 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   // double *vek_x, *vek_y, *vek_z, *r_1;
   // int *nom_j;
   tagint *tag = atom->tag;
+  // imageint *image = atom->image;
+  bigint nglobal = atom->natoms;
+
+  // Arrays for parallel computing
+  double **f_at_g3, **f_at_g3_proc;
 
   // pointers to LAMMPS arrays 
   int *ilist,*jlist,*numneigh,**firstneigh;
@@ -2446,6 +2469,7 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
 
+  // std::cout << "nlocal = " << nlocal << std::endl;
   // memory allocation for local arrays
   // memory->create(funf, max_neighb, mf3, "PairLS:funf_g3");
   // memory->create(funfp, max_neighb, mf3, "PairLS:funfp_g3");
@@ -2458,6 +2482,20 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   // memory->create(r_1, max_neighb, "PairLS:r_1_g3");
   // memory->create(nom_j, max_neighb, "PairLS:nom_j_g3");
   // std::cout << "!!!!! PairLS debug mode !!!!! " << " e_force_g3 rr_pot[js][is]"  << std::endl;
+
+  memory->create(f_at_g3_proc, nglobal, 3, "PairLS:f_at_g3_proc");
+  memory->create(f_at_g3, nglobal, 3, "PairLS:f_at_g3");
+
+  for (i = 0; i < nglobal; i++)
+  {
+    f_at_g3[i][0] = 0.0;
+    f_at_g3[i][1] = 0.0;
+    f_at_g3[i][2] = 0.0;
+    f_at_g3_proc[i][0] = 0.0;
+    f_at_g3_proc[i][1] = 0.0;
+    f_at_g3_proc[i][2] = 0.0;    
+  }
+
   for (is = 1; is <= n_sort; is++)
   {
     for (js = 1; js <= n_sort; js++)
@@ -2492,9 +2530,9 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
     for (jj = 0; jj < jnum; jj++) 
     {
       j = jlist[jj];  // local or ghost index of atom j
-      // // !std::cout << "j = " << j << std::endl;
       js = i_sort_at[j]; 
       lj = atom->map(tag[j]);  // mapped local index of atom j
+      // std::cout << " j = " <<  j << " lj = " <<  lj << std::endl;
       xx = r_at[j][0] - x;
       yy = r_at[j][1] - y;
       zz = r_at[j][2] - z;
@@ -2548,6 +2586,7 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
         // // !std::cout << "jj = " << jj << std::endl;
         // // !std::cout << "j = " << j << std::endl;
         // std::cout << " nom_j[" << jj+1 << "]= " <<  tag[j] << std::endl;
+        // if (j > nlocal) std::cout << " j = " <<  j << " lj = " <<  lj << std::endl;
         js = i_sort_at[j];
 
         Dmn = 0.0;
@@ -2614,13 +2653,53 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
           // p_Gmn[2] = p_Gmn[2] - w3*(vek_z[jj] - vek_z[kk]);
         }
 
-        f_at[i][0] += Dmn*evek_x[jj]; // force n = >m;
-        f_at[i][1] += Dmn*evek_y[jj];
-        f_at[i][2] += Dmn*evek_z[jj];
+        // Start serial version
+        // f_at[i][0] += Dmn*evek_x[jj]; // force n = >m;
+        // f_at[i][1] += Dmn*evek_y[jj];
+        // f_at[i][2] += Dmn*evek_z[jj];
+        // End serial version
 
-        f_at[lj][0] += (Gmn[0] - Dmn*evek_x[jj]);
-        f_at[lj][1] += (Gmn[1] - Dmn*evek_y[jj]);
-        f_at[lj][2] += (Gmn[2] - Dmn*evek_z[jj]);
+        // f_at[lj][0] += (Gmn[0] - Dmn*evek_x[jj]); // works in serial version but does not work in parallel
+        // f_at[lj][1] += (Gmn[1] - Dmn*evek_y[jj]); 
+        // f_at[lj][2] += (Gmn[2] - Dmn*evek_z[jj]); 
+
+        // if (lj < nlocal)    // if atom is owned by this proc
+        // {
+        //   f_at[lj][0] += (Gmn[0] - Dmn*evek_x[jj]);
+        //   f_at[lj][1] += (Gmn[1] - Dmn*evek_y[jj]);
+        //   f_at[lj][2] += (Gmn[2] - Dmn*evek_z[jj]);
+        // }
+
+        f_at_g3_proc[tag[i]-1][0] += Dmn*evek_x[jj];
+        f_at_g3_proc[tag[i]-1][1] += Dmn*evek_y[jj];
+        f_at_g3_proc[tag[i]-1][2] += Dmn*evek_z[jj];
+
+        f_at_g3_proc[tag[j]-1][0] += (Gmn[0] - Dmn*evek_x[jj]);
+        f_at_g3_proc[tag[j]-1][1] += (Gmn[1] - Dmn*evek_y[jj]);
+        f_at_g3_proc[tag[j]-1][2] += (Gmn[2] - Dmn*evek_z[jj]);
+
+        // if (j < nlocal) 
+        // {
+        //   f_at[j][0] += (Gmn[0] - Dmn*evek_x[jj]);
+        //   f_at[j][1] += (Gmn[1] - Dmn*evek_y[jj]);
+        //   f_at[j][2] += (Gmn[2] - Dmn*evek_z[jj]);
+        // }
+        // else
+        // {
+        //   // std::cout << "domain->ownatom = "<< domain->ownatom(tag[j],r_at[j],&atom->image[j],0) << " lj =" << lj << std::endl;
+        //   // std::cout << "domain->ownatom = "<< domain->ownatom(tag[j],r_at[j],&atom->image[tag[j]],0)  << std::endl;
+        //   // if (domain->ownatom(tag[j],r_at[j],&atom->image[tag[j]],0) == 1)
+        //   // std::cout << "atom->map(tag[j]) = " << atom->map(tag[j]) << " atom->map(tag[lj]) = " << atom->map(tag[lj]) << std::endl;
+        //   if (lj <= nlocal)
+        //   {
+        //     // std::cout << domain->ownatom(tag[j],r_at[j],&atom->image[j],0) << std::endl;
+        //     // std::cout << "domain->ownatom = "<< domain->ownatom(tag[j],r_at[j],&atom->image[tag[j]],0) << " lj =" << lj << std::endl;
+        //     f_at[lj][0] += (Gmn[0] - Dmn*evek_x[jj]);
+        //     f_at[lj][1] += (Gmn[1] - Dmn*evek_y[jj]);
+        //     f_at[lj][2] += (Gmn[2] - Dmn*evek_z[jj]);             
+        //   }
+        
+        // }
 
         // for pressure
         // w = 0.5*(-1.0)/(sizex*sizey*sizez);
@@ -2643,6 +2722,17 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   }
   // !std::cout << "Finished loop over the LAMMPS full neighbour list in e_force_g3" << std::endl;
 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(f_at_g3_proc,f_at_g3,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+
+  for (i = 0; i < nlocal; i++)
+  {
+    f_at[i][0] += f_at_g3[tag[i]-1][0];
+    f_at[i][1] += f_at_g3[tag[i]-1][1];
+    f_at[i][2] += f_at_g3[tag[i]-1][2];
+  }
+
+
   // w = 0.5*(-1.0)/(sizex*sizey*sizez);
   // for (i = 0; i < n_at; i++)
   // {
@@ -2651,6 +2741,8 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   //   pz_at[i] = w*pz_at[i];
   // }
 
+  memory->destroy(f_at_g3_proc);
+  memory->destroy(f_at_g3);
   // memory->destroy(funf);   
   // memory->destroy(funfp);  
   // memory->destroy(evek_x); 
