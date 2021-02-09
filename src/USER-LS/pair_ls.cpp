@@ -253,6 +253,8 @@ void PairLS::compute(int eflag, int vflag)
 
   memory->create(e_at,nlocal,"PairLS:e_at");
 
+  e_force_fi_emb(eflag, vflag, e_at, f, x);
+
   if (if_g3_pot) e_force_g3(eflag, vflag, e_at, f, x);
 
   if (vflag_fdotr) virial_fdotr_compute();
@@ -2232,7 +2234,7 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
       }
     }
     e_at[i] += e_angle;
-    if (eflag_atom) eatom[i] = e_at[i];
+    if (eflag_atom) eatom[i] += e_angle;
     eng_vdwl += e_angle;
   }
 
