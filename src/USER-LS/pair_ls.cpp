@@ -1915,6 +1915,8 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
   bigint nglobal = atom->natoms;
   int *type = atom->type;
 
+  // arrays for virial computation
+  double fi[3], deli[3];
 
   memory->create(rosum, nall, "PairLS:rosum");
   memory->create(rosum_global_proc, nglobal, "PairLS:rosum_global_proc");
@@ -2041,7 +2043,16 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
         f_at[i][0] += w1;
         f_at[i][1] += w2; // add the fi force j = >i;
         f_at[i][2] += w3;
-        if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
+
+        // virial computation
+        fi[0] = w1;
+        fi[1] = w2;
+        fi[2] = w3;
+        deli[0] = xx;
+        deli[1] = yy;
+        deli[2] = zz;
+        // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
+        if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
       }
     }
   }
@@ -2073,6 +2084,9 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
 
   tagint *tag = atom->tag;
   bigint nglobal = atom->natoms;
+
+  // arrays for virial computation
+  double fi[3], deli[3];
 
   // Arrays for parallel computing
   double *f_at_g3_x, *f_at_g3_proc_x;
@@ -2179,6 +2193,10 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         j = nom_j[jj]; // j is n in formul for Dmn and j is m in formul for Gmn;
         lj = atom->map(tag[j]);  // mapped local index of atom j
         js = type[j];
+        
+        xx = r_at[j][0] - x;
+        yy = r_at[j][1] - y;
+        zz = r_at[j][2] - z;
 
         Dmn = 0.0;
         Gmn[0] = 0.0;
@@ -2230,7 +2248,15 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         f_at_g3_proc_y[tag[j]-1] += (Gmn[1] - Dmn*evek_y[jj]);
         f_at_g3_proc_z[tag[j]-1] += (Gmn[2] - Dmn*evek_z[jj]);
 
-        if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, Dmn*evek_x[jj], Dmn*evek_y[jj], Dmn*evek_z[jj], xx, yy, zz); // calculating global and per-atom virial
+        // virial computation
+        fi[0] = Dmn*evek_x[jj];
+        fi[1] = Dmn*evek_y[jj];
+        fi[2] = Dmn*evek_z[jj];
+        deli[0] = xx;
+        deli[1] = yy;
+        deli[2] = zz;
+        // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, Dmn*evek_x[jj], Dmn*evek_y[jj], Dmn*evek_z[jj], xx, yy, zz); // calculating global and per-atom virial
+        if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
       }
     }
     e_at[i] += e_angle;
