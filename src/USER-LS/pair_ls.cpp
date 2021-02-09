@@ -2230,7 +2230,7 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         f_at_g3_proc_y[tag[j]-1] += (Gmn[1] - Dmn*evek_y[jj]);
         f_at_g3_proc_z[tag[j]-1] += (Gmn[2] - Dmn*evek_z[jj]);
 
-        if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, f_at_g3_proc_x[tag[i]-1], f_at_g3_proc_y[tag[i]-1], f_at_g3_proc_z[tag[i]-1], xx, yy, zz); // calculating global and per-atom virial
+        if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, Dmn*evek_x[jj], Dmn*evek_y[jj], Dmn*evek_z[jj], xx, yy, zz); // calculating global and per-atom virial
       }
     }
     e_at[i] += e_angle;
