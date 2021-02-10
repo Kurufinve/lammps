@@ -235,8 +235,8 @@ void PairLS::compute(int eflag, int vflag)
    vflag = 12 = both per-atom virial and per-atom centroid virial
    vflag = 13 or 15 = global, per-atom virial and per-atom centroid virial
 ------------------------------------------------------------------------- */  
-  // eflag = 3; // = both global and per-atom energy
-
+  eflag = 3; // = both global and per-atom energy
+  vflag = 6;
   // if (comm->me == 0) 
   // {
   //   std::cout << "timestep = " << update->ntimestep << std::endl;
@@ -286,6 +286,18 @@ void PairLS::compute(int eflag, int vflag)
 
   if (if_g3_pot) e_force_g3(eflag, vflag, e_at, f, x);
 
+  /* computing per-atom virial */
+  for (int i = 0; i < nlocal; i++) 
+  {
+    vatom[i][0] = f[i][0]*x[i][0];
+    vatom[i][1] = f[i][1]*x[i][1];
+    vatom[i][2] = f[i][2]*x[i][2];
+    vatom[i][3] = f[i][1]*x[i][0];
+    vatom[i][4] = f[i][2]*x[i][0];
+    vatom[i][5] = f[i][2]*x[i][1];
+  }
+
+  /* computing global virial */
   if (vflag_fdotr) virial_fdotr_compute();
 
   memory->destroy(e_at);
@@ -2077,15 +2089,23 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
         f_at[i][1] += w2; // add the fi force j = >i;
         f_at[i][2] += w3;
 
-        // virial computation
-        fi[0] = w1;
-        fi[1] = w2;
-        fi[2] = w3;
-        deli[0] = xx;
-        deli[1] = yy;
-        deli[2] = zz;
-        // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
-        if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+        /* virial computation through the v_tally method of the parent pair class */
+        // fi[0] = w1;
+        // fi[1] = w2;
+        // fi[2] = w3;
+        // deli[0] = xx;
+        // deli[1] = yy;
+        // deli[2] = zz;
+        // // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
+        // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+
+        // /* direct virial computation */
+        // vatom[i][0] += 0.5*w1*xx;
+        // vatom[i][1] += 0.5*w2*yy;
+        // vatom[i][2] += 0.5*w3*zz;
+        // vatom[i][3] += 0.5*w2*xx;
+        // vatom[i][4] += 0.5*w3*xx;
+        // vatom[i][5] += 0.5*w2*zz;
       }
     }
   }
@@ -2281,15 +2301,14 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         f_at_g3_proc_y[tag[j]-1] += (Gmn[1] - Dmn*evek_y[jj]);
         f_at_g3_proc_z[tag[j]-1] += (Gmn[2] - Dmn*evek_z[jj]);
 
-        // virial computation
-        fi[0] = Dmn*evek_x[jj];
-        fi[1] = Dmn*evek_y[jj];
-        fi[2] = Dmn*evek_z[jj];
-        deli[0] = xx;
-        deli[1] = yy;
-        deli[2] = zz;
-        // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, Dmn*evek_x[jj], Dmn*evek_y[jj], Dmn*evek_z[jj], xx, yy, zz); // calculating global and per-atom virial
-        if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+        // /* virial computation through the v_tally method of the parent pair class */
+        // fi[0] = Dmn*evek_x[jj];
+        // fi[1] = Dmn*evek_y[jj];
+        // fi[2] = Dmn*evek_z[jj];
+        // deli[0] = xx;
+        // deli[1] = yy;
+        // deli[2] = zz;
+        // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
       }
     }
     e_at[i] += e_angle;
