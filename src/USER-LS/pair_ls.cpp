@@ -273,6 +273,15 @@ void PairLS::compute(int eflag, int vflag)
   eng_vdwl = eng_coul = 0.0;
   for (int i = 0; i < 6; i++) virial[i] = 0.0;
 
+  // if (comm->me == 0) 
+  // {
+  //   // std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "after zeroing eng_vdwl"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
+  // }
+
+
   e_force_fi_emb(eflag, vflag, e_at, f, x);
 
   if (if_g3_pot) e_force_g3(eflag, vflag, e_at, f, x);
@@ -1951,7 +1960,11 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
     }
   }
   
-  for (i = 0; i < nall; i++) rosum[i] = 0.0;
+  for (i = 0; i < nlocal; i++)
+  {
+    e_at[i] = 0.0;
+    rosum[i] = 0.0;
+  } 
 
   for (i = 0; i < nglobal; i++) 
   {
