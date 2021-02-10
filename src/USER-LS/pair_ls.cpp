@@ -236,6 +236,15 @@ void PairLS::compute(int eflag, int vflag)
    vflag = 13 or 15 = global, per-atom virial and per-atom centroid virial
 ------------------------------------------------------------------------- */  
   // eflag = 3; // = both global and per-atom energy
+
+  // if (comm->me == 0) 
+  // {
+  //   std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "before ev_init(" << eflag <<","<<vflag<<")"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
+  // }
+
   ev_init(eflag,vflag);
 
   double **x = atom->x;
@@ -252,6 +261,17 @@ void PairLS::compute(int eflag, int vflag)
   atom->map_set();
 
   memory->create(e_at,nlocal,"PairLS:e_at");
+
+  // if (comm->me == 0) 
+  // {
+  //   // std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "after ev_init(" << eflag <<","<<vflag<<")"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
+  // }
+
+  eng_vdwl = eng_coul = 0.0;
+  for (int i = 0; i < 6; i++) virial[i] = 0.0;
 
   e_force_fi_emb(eflag, vflag, e_at, f, x);
 
