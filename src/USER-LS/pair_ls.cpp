@@ -50,6 +50,13 @@ PairLS::PairLS(LAMMPS *lmp) : Pair(lmp)
 {
   // !std::cout << "!!!!! PairLS debug mode !!!!! " << "PairLS constructor started working"  << std::endl;
 
+  restartinfo = 0;
+  single_enable = 0;
+  one_coeff = 1;
+  manybody_flag = 1;
+  
+  allocated = 0;
+
   rosum = nullptr;
 
   shag_sp_fi  = nullptr;
@@ -117,8 +124,8 @@ PairLS::PairLS(LAMMPS *lmp) : Pair(lmp)
 
   n_sort = atom->ntypes;
 
-  comm_forward = 1;
-  comm_reverse = 1;
+  // comm_forward = 1;
+  // comm_reverse = 1;
 
   periodic[0] = domain->xperiodic;
   periodic[1] = domain->yperiodic;
@@ -229,75 +236,94 @@ void PairLS::compute(int eflag, int vflag)
    vflag = 13 or 15 = global, per-atom virial and per-atom centroid virial
 ------------------------------------------------------------------------- */  
   eflag = 3; // = both global and per-atom energy
+  vflag = 6;
+  // if (comm->me == 0) 
+  // {
+  //   std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "before ev_init(" << eflag <<","<<vflag<<")"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
+  // }
+
   ev_init(eflag,vflag);
 
   double **x = atom->x;
   double **f = atom->f;
   double **v = atom->v;
+  double *e_at;
   int *type = atom->type;
 
   int nlocal = atom->nlocal;
   int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
-  tagint *tag = atom->tag;
-
-  double sizex = domain->xprd; // global x box dimension
-  double sizey = domain->yprd; // global y box dimension
-  double sizez = domain->zprd; // global z box dimension
-
-  // local pressure arrays for this pair style, maybe they will not be needed
-  // double *px_at, *py_at, *pz_at;
-
-  // memory->create(px_at,nlocal,"PairLS:px_at");
-  // memory->create(py_at,nlocal,"PairLS:py_at");
-  // memory->create(pz_at,nlocal,"PairLS:pz_at");
 
   atom->map_init(1);
   atom->map_set();
 
-  // e_force_fi_emb(eflag, eatom, f, px_at, py_at, pz_at, x, type, nlocal, sizex, sizey, sizez);
-  e_force_fi_emb(eflag, eatom, f, x, type, nlocal, sizex, sizey, sizez);
+  memory->create(e_at,nlocal,"PairLS:e_at");
 
-  // if (if_g3_pot) e_force_g3(eflag, eatom, f, px_at, py_at, pz_at, x, type, nlocal, sizex, sizey, sizez);
-  if (if_g3_pot) e_force_g3(eflag, eatom, f, x, type, nlocal, sizex, sizey, sizez);
-
-  // neighbor list info
-
-  // inum_half = listhalf->inum;
-  // ilist_half = listhalf->ilist;
-  // numneigh_half = listhalf->numneigh;
-  // firstneigh_half = listhalf->firstneigh;
-
-  // inum_full = listfull->inum;
-  // ilist_full = listfull->ilist;  
-  // numneigh_full = listfull->numneigh;
-  // firstneigh_full = listfull->firstneigh;
-
-  // // inum = list->inum;
-  // // ilist = list->ilist;
-  // // numneigh = list->numneigh;
-  // // firstneigh = list->firstneigh;
-
-  // inum = inum_full;
-  // ilist = ilist_full;
-  // numneigh = numneigh_full;
-  // firstneigh = firstneigh_full;
-
-  if (vflag_fdotr) virial_fdotr_compute();
-
-  // std::cout << "Energies and forces on atoms on step " << update->ntimestep << std::endl;
-  // // std::cout << "i_at  e_at       x        y        z       f_x        f_y        f_z" << std::endl;
-  // // std::cout << "i_at  e_at       f_x        f_y        f_z" << std::endl;
-  // for (int i = 0; i < nlocal; i++)
+  // if (comm->me == 0) 
   // {
-  // //   std::cout << i+1 << " " << x[i][0] << " " << x[i][1] << " " << x[i][2] <<"    " << eatom[i] << " " << f[i][0] << " " << f[i][1] << " " << f[i][2] << std::endl;
-  //   std::cout << tag[i] << "    " << eatom[i] << " " << f[i][0] << " " << f[i][1] << " " << f[i][2] << std::endl;
+  //   // std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "after ev_init(" << eflag <<","<<vflag<<")"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
   // }
 
-  // memory->destroy(px_at);
-  // memory->destroy(py_at);
-  // memory->destroy(pz_at);
+  eng_vdwl = eng_coul = 0.0;
+  for (int i = 0; i < 6; i++) virial[i] = 0.0;
 
+  // if (comm->me == 0) 
+  // {
+  //   // std::cout << "timestep = " << update->ntimestep << std::endl;
+  //   std::cout << "after zeroing eng_vdwl"<<std::endl;
+  //   std::cout << "eng_vdwl = " << eng_vdwl << "  eng_coul = " << eng_coul << std::endl;
+  //   for (int i = 0; i < 6; i++) std::cout << "virial["<<i<<"] = " << virial[i] << std::endl;
+  // }
+
+
+  e_force_fi_emb(eflag, vflag, e_at, f, x);
+
+  if (if_g3_pot) e_force_g3(eflag, vflag, e_at, f, x);
+
+  /* computing per-atom virial (deprecated)*/
+  // for (int i = 0; i < nlocal; i++) 
+  // {
+  //   vatom[i][0] = f[i][0]*x[i][0];
+  //   vatom[i][1] = f[i][1]*x[i][1];
+  //   vatom[i][2] = f[i][2]*x[i][2];
+  //   vatom[i][3] = f[i][1]*x[i][0];
+  //   vatom[i][4] = f[i][2]*x[i][0];
+  //   vatom[i][5] = f[i][2]*x[i][1];
+  // }
+
+  /* computing global virial with pair function virial_fdotr_compute() (does not work correctly for unknown reasons)*/
+  // if (vflag_fdotr) virial_fdotr_compute();
+  /* computing global virial aa sum of per-atom contirbutions*/
+  if (vflag_fdotr)
+  {
+    // zeroing global virial to avoid inconsistence
+    for (int i = 0; i < nlocal; i++) 
+    {
+      virial[0] = 0.0;
+      virial[1] = 0.0;
+      virial[2] = 0.0;
+      virial[3] = 0.0;
+      virial[4] = 0.0;
+      virial[5] = 0.0;
+    }
+    for (int i = 0; i < nlocal; i++) 
+    {
+      virial[0] += vatom[i][0];
+      virial[1] += vatom[i][1];
+      virial[2] += vatom[i][2];
+      virial[3] += vatom[i][3];
+      virial[4] += vatom[i][4];
+      virial[5] += vatom[i][5];
+    }
+  }
+
+  memory->destroy(e_at);
 }
 
 /* ----------------------------------------------------------------------
@@ -307,8 +333,6 @@ void PairLS::compute(int eflag, int vflag)
 void PairLS::allocate()
 {
   int n = atom->ntypes;
-
-  // !std::cout << "!!!!! PairLS debug mode !!!!! " << " Start allocating memory"  << std::endl;
 
   memory->create(setflag,n+1,n+1,"pair:setflag");
   for (int i = 1; i <= n; i++)
@@ -489,14 +513,8 @@ void PairLS::coeff(int narg, char **arg)
 
   for (i = 1; i <= (n_sort); i++)
     {
-      // !std::cout << "!!!!! PairLS debug mode !!!!! " << " Start reading potential for atom " << i << std::endl;
-      // name_32 = arg[i];
-      // r_pot_ls_is(name_32, i);
-      // !std::cout << "!!!!! PairLS debug mode !!!!! " << " The arg with potential name is " << arg[i-1] << std::endl;
       r_pot_ls_is(arg[i+1], i, lcf, ecf);
-      // !std::cout << "!!!!! PairLS debug mode !!!!! " << " End reading potential for atom " << i << std::endl;
       par2pot_is(i);
-      // !std::cout << "!!!!! PairLS debug mode !!!!! " << " End parametrizing potential for atom " << i << std::endl;
       setflag[i][i] = 1;
     }
 
@@ -554,59 +572,14 @@ void PairLS::coeff(int narg, char **arg)
       {
         for (j = i + 1; j <= n_sort; j++)
         {
-          // name_32 = arg[ij];
-          // r_pot_ls_is1_is2(name_32, i, j);
-          // !std::cout << "!!!!! PairLS debug mode !!!!! " << " Start reading cross potential for atoms " << i << " and " << j << std::endl;
-          // !std::cout << "!!!!! PairLS debug mode !!!!! " << " The arg with potential name is " << arg[ij-1] << std::endl;
           r_pot_ls_is1_is2(arg[ij+1], i, j, lcf, ecf);
-          // !std::cout << "!!!!! PairLS debug mode !!!!! " << " End reading cross potential for atoms " << i << " and " << j << std::endl;
           par2pot_is1_is2(i,j);
-          // !std::cout << "!!!!! PairLS debug mode !!!!! " << " End parametrizing cross potential for atoms " << i << " and " << j << std::endl;
           par2pot_is1_is2(j,i);          
-          // !std::cout << "!!!!! PairLS debug mode !!!!! " << " End parametrizing cross potential for atoms " << j << " and " << i << std::endl;
           setflag[i][j] = 1;
           ij++;
         }
       }
     }
-
-
-  // for (int i = 4 + nelements; i < narg; i++) {
-  //   m = i - (4+nelements) + 1;
-  //   int j;
-  //   for (j = 0; j < nelements; j++)
-  //     if (strcmp(arg[i],elements[j]) == 0) break;
-  //   if (j < nelements) map[m] = j;
-  //   else if (strcmp(arg[i],"NULL") == 0) map[m] = -1;
-  //   else error->all(FLERR,"Incorrect args for pair coefficients");
-  // }
-
-  // // clear setflag since coeff() called once with I,J = * *
-
-  // n = atom->ntypes;
-  // for (int i = 1; i <= n; i++)
-  //   for (int j = i; j <= n; j++)
-  //     setflag[i][j] = 0;
-
-  // // set setflag i,j for type pairs where both are mapped to elements
-  // // set mass for i,i in atom class
-
-  // int count = 0;
-  // for (int i = 1; i <= n; i++) {
-  //   for (int j = i; j <= n; j++) {
-  //     if (map[i] >= 0 && map[j] >= 0) {
-  //       setflag[i][j] = 1;
-  //       if (i == j) atom->set_mass(FLERR,i,mass[map[i]]);
-  //       count++;
-  //     }
-  //     scale[i][j] = 1.0;
-  //   }
-  // }
-
-  // if (count == 0) error->all(FLERR,"Incorrect args for pair coefficients");
-
-
-
 
 
 }
@@ -619,20 +592,7 @@ void PairLS::coeff(int narg, char **arg)
 
 void PairLS::init_style()
 {
-  // convert read-in file(s) to arrays and spline them
-
-  // file2array();
-  // array2spline();
-
-  // neighbor->request(this,instance_me);
-  // embedstep = -1;
-
-// void PairMEAMC::init_style()
-// {
-//   if (force->newton_pair == 0)
-//     error->all(FLERR,"Pair style MEAM requires newton pair on");
-
-  // need full and half neighbor list
+  // need full neighbor list
   // force->newton_pair = 0;
 
   int irequest_full = neighbor->request(this,instance_me);
@@ -642,18 +602,6 @@ void PairLS::init_style()
   // int irequest_half = neighbor->request(this,instance_me);
   // neighbor->requests[irequest_half]->id = 2;
 
-// void PairTersoff::init_style()
-// {
-//   if (atom->tag_enable == 0)
-//     error->all(FLERR,"Pair style Tersoff requires atom IDs");
-//   if (force->newton_pair == 0)
-//     error->all(FLERR,"Pair style Tersoff requires newton pair on");
-
-//   // need a full neighbor list
-
-  // int irequest = neighbor->request(this,instance_me);
-  // neighbor->requests[irequest]->half = 0;
-  // neighbor->requests[irequest]->full = 1;
 }
 
 /* ----------------------------------------------------------------------
@@ -711,14 +659,10 @@ void PairLS::unpack_reverse_comm(int n, int *list, double *buf)
 void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
 {
 
-  // !std::cout << "!!!!! PairLS debug mode !!!!! " << " I am in a void PairLS::r_pot_ls_is" << std::endl;
-  // !std::cout << "!!!!! PairLS debug mode !!!!! " << " name_32 is " << name_32 << std::endl;
 
   if(comm->me == 0) 
   {
-    // !std::cout << "!!!!! PairLS debug mode !!!!! " << " if(comm->me == 0) condition is valid " << std::endl;
     PotentialFileReader reader(lmp, name_32, "ls");
-    // !std::cout << "!!!!! PairLS debug mode !!!!! " << " PotentialFileReader instance is created" << std::endl;
 
     try {
 
@@ -726,7 +670,6 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // read(23,'(A128)') info_pot
 
       reader.skip_line();  // the unnessessary information in the 1st line
-      // !std::cout << " The 1st line is skipped" << std::endl;
 
       // wr_pot_ls_is.f (76-78):
       // read(23,*) if_g3_pot
@@ -735,11 +678,8 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
 
 
       if_g3_pot = strcmp(reader.next_string().c_str(),".true.") == 0;
-      // !std::cout << " if_g3_pot = " << if_g3_pot << std::endl;
       if_g4_pot = strcmp(reader.next_string().c_str(),".true.") == 0;
-      // !std::cout << " if_g4_pot = " << if_g4_pot << std::endl;
       reader.skip_line(); // the unnessessary information in the 4th line
-      // !std::cout << " The 4th line is skipped" << std::endl;
 
       // wr_pot_ls_is.f (80-83):
       // read(23,*) n_sp_fi
@@ -748,14 +688,11 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // enddo
 
       n_sp_fi[is][is] = reader.next_int();
-      // !std::cout << " n_sp_fi[" << is << "][" << is << "] = " << n_sp_fi[is][is] << std::endl;
       for (int n = 0; n < n_sp_fi[is][is]; n++)
       {
         ValueTokenizer sp_fi_values = reader.next_values(2);
         R_sp_fi[is][is][n] = lcf*sp_fi_values.next_double();
         a_sp_fi[is][is][n] = ecf*sp_fi_values.next_double();
-        // !std::cout << " R_sp_fi[" << n << "][" << is << "][" << is << "] = " << R_sp_fi[is][is][n] << "   ";
-        // !std::cout << " a_sp_fi[" << n << "][" << is << "][" << is << "] = " << a_sp_fi[is][is][n] << std::endl;
       }
 
       // wr_pot_ls_is.f (84-86):
@@ -764,11 +701,8 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // read(23,*) e0_ZBL(is,is)
 
       fip_rmin[is][is] = reader.next_double();
-      // !std::cout << " fip_rmin[" << is << "][" << is << "] = " << fip_rmin[is][is] << std::endl;
       Rmin_fi_ZBL[is][is] = lcf*reader.next_double();
-      // !std::cout << " Rmin_fi_ZBL[" << is << "][" << is << "] = " << Rmin_fi_ZBL[is][is] << std::endl;
       e0_ZBL[is][is] = ecf*reader.next_double();
-      // !std::cout << " e0_ZBL[" << is << "][" << is << "] = " << e0_ZBL[is][is] << std::endl;
 
 
       // wr_pot_ls_is.f (88-91):
@@ -778,14 +712,11 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // enddo
 
       n_sp_ro[is][is] = reader.next_int();
-      // !std::cout << " n_sp_ro[" << is << "][" << is << "] = " << n_sp_ro[is][is] << std::endl;
       for (int n = 0; n < n_sp_ro[is][is]; n++)
       {
         ValueTokenizer sp_ro_values = reader.next_values(2);
         R_sp_ro[is][is][n] = lcf*sp_ro_values.next_double();
         a_sp_ro[is][is][n] = ecf*sp_ro_values.next_double();
-        // !std::cout << " R_sp_ro[" << n << "][" << is << "][" << is << "] = " << R_sp_ro[is][is][n] << "   ";
-        // !std::cout << " a_sp_ro[" << n << "][" << is << "][" << is << "] = " << a_sp_ro[is][is][n] << std::endl;
       }    
 
       // wr_pot_ls_is.f (92-95):
@@ -795,14 +726,11 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // enddo
 
       n_sp_emb[is][is] = reader.next_int();
-      // !std::cout << " n_sp_emb[" << is << "][" << is << "] = " << n_sp_emb[is][is] << std::endl;
       for (int n = 0; n < n_sp_emb[is][is]; n++)
       {
         ValueTokenizer sp_emb_values = reader.next_values(2);
         R_sp_emb[is][n] = lcf*sp_emb_values.next_double();
         a_sp_emb[is][n] = ecf*sp_emb_values.next_double();
-        // !std::cout << " R_sp_emb[" << n << "][" << is << "] = " << R_sp_emb[is][n] << "   ";
-        // !std::cout << " a_sp_emb[" << n << "][" << is << "] = " << a_sp_emb[is][n] << std::endl;
       }         
 
       // wr_pot_ls_is.f (97-101):
@@ -814,20 +742,15 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       {
         ValueTokenizer values = reader.next_values(2);
         n_sp_f[is][is] = values.next_int();
-        // !std::cout << " n_sp_f[" << is << "][" << is << "] = " << n_sp_f[is][is] << std::endl;
         n_f3[is] = values.next_int();
-        // !std::cout << " n_f3[" << is << "] = " << n_f3[is] << std::endl;
         for (int n = 0; n < n_sp_f[is][is]; n++)
         {
           ValueTokenizer sp_f_values = reader.next_values(n_f3[is]+1);
           R_sp_f[is][is][n] = lcf*sp_f_values.next_double();
-          // !std::cout << " R_sp_f[" << n << "][" << is << "][" << is << "] = " << R_sp_f[is][is][n] << "   ";
           for (int n1 = 0; n1 < n_f3[is]; n1++)
           {
             a_sp_f3[is][is][n1][n] = ecf*sp_f_values.next_double();
-            // !std::cout << " a_sp_f[" << n << "][" << n1 << "]["<< is << "][" << is << "] = " << a_sp_f3[is][is][n1][n] << "  ";
           }
-          // !std::cout << std::endl;
 
         }
 
@@ -841,14 +764,11 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
         // enddo
 
         n_sp_g[is][is] = reader.next_int();
-        // !std::cout << " n_sp_g[" << is << "][" << is << "] = " << n_sp_g[is][is] << "   ";
         values = reader.next_values(n_sp_g[is][is]);
         for (int n = 0; n < n_sp_g[is][is]; n++)
         {
           R_sp_g[n] = lcf*values.next_double();  // R_sp_g actually are the values of cos(ijk) from -1 (180 grad) to 1 (0 grad)
-          // !std::cout << " R_sp_g[" << n << "] = " << R_sp_g[n]<< "   ";
         }
-        // !std::cout << std::endl;
         
         for (int n = 0; n < n_f3[is]; n++)
         {
@@ -857,13 +777,8 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
             ValueTokenizer sp_g_values = reader.next_values(n_sp_g[is][is]);
             for (int n2 = 0; n2 < n_sp_g[is][is]; n2++)
             {
-              // a_sp_g3[is][n1][n][n2] = ecf*sp_g_values.next_double();
-
               a_sp_g3[is][n2][n][n1] = ecf*sp_g_values.next_double();
-              // a_sp_g3[is][n][n1][n2] = ecf*sp_g_values.next_double();
-              // !std::cout << " a_sp_f[" << n2 << "][" << n << "]["<< n1 << "][" << is << "] = " << a_sp_g3[is][n1][n][n2] << "  ";
             }
-            // !std::cout << std::endl;
           }
         }
       }
@@ -877,19 +792,14 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
       // enddo
 
       z_ion[is] = reader.next_double();
-      // !std::cout << " z_ion[" << is << "] = " << z_ion[is]<< std::endl;
       for (int n = 0; n < 4; n++)
       {
         c_ZBL[n] = ecf*reader.next_double();
-        // !std::cout << " c_ZBL[" << n << "] = " << c_ZBL[n]<< std::endl;
       }
 
       for (int n = 0; n < 4; n++)
       {
-        // d_ZBL[is][is][n] = reader.next_double();
         d_ZBL[n] = ecf*reader.next_double();
-        // // !std::cout << " d_ZBL[" << n << "]["<< is << "][" << is << "] = " << d_ZBL[is][is][n]<< std::endl;
-        // !std::cout << " d_ZBL[" << n <<  "] = " << d_ZBL[n]<< std::endl;
       }
     }
     catch (TokenizerException &e) {
@@ -898,34 +808,9 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
 
   }
  
-  // broadcasting potential information to other procs
-  // MPI_Bcast(&n_sp_fi[is][is], 1, MPI_INT, 0, world);
-  // for (int n = 0; n < n_sp_fi[is][is]; n++)
-  // MPI_Bcast(R_sp_fi[is][is], n_sp_fi[is][is], MPI_DOUBLE, 0, world);
-  // MPI_Bcast(a_sp_fi[is][is], n_sp_fi[is][is], MPI_DOUBLE, 0, world);
-
-  // MPI_Bcast(&fip_rmin[is][is], 1, MPI_DOUBLE, 0, world);
-  // MPI_Bcast(&Rmin_fi_ZBL[is][is], 1, MPI_DOUBLE, 0, world);
-  // MPI_Bcast(&e0_ZBL[is][is], 1, MPI_DOUBLE, 0, world);
-
-  // MPI_Bcast(&n_sp_ro[is][is], 1, MPI_INT, 0, world);
-  // MPI_Bcast(R_sp_ro[is][is], n_sp_ro[is][is], MPI_DOUBLE, 0, world);
-  // MPI_Bcast(a_sp_ro[is][is], n_sp_ro[is][is], MPI_DOUBLE, 0, world);
-
-  // MPI_Bcast(&n_emb[is][is], 1, MPI_INT, 0, world);
-  // MPI_Bcast(R_sp_emb[is][is], n_emb[is][is], MPI_DOUBLE, 0, world);
-  // MPI_Bcast(a_sp_emb[is][is], n_emb[is][is], MPI_DOUBLE, 0, world);  
-
-  // MPI_Bcast(&n_sp_f[is][is], 1, MPI_INT, 0, world);
-  // MPI_Bcast(&n_f3[is], 1, MPI_INT, 0, world);
-  // MPI_Bcast(R_sp_f[is][is], n_sp_f[is][is], MPI_DOUBLE, 0, world);
-  // for (int n1 = 0; n1 < n_f3[is]; n1++)
-  // {
-  //   MPI_Bcast(a_sp_f3[n1][is][is], n_sp_f[is][is], MPI_DOUBLE, 0, world);
-  // }  
-  // End broadcasting potential information to other procs
-  
+ 
   // Start broadcasting unary potential information to other procs using cycles
+  MPI_Bcast(&if_g3_pot, 1, MPI_INT, 0, world);
   MPI_Bcast(&n_sp_fi[is][is], 1, MPI_INT, 0, world);
   for (int n = 0; n < n_sp_fi[is][is]; n++)
   {
@@ -986,22 +871,10 @@ void PairLS::r_pot_ls_is(char *name_32, int is, double lcf, double ecf)
 
 void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, double ecf)
 {
-  // FILE *potfile;
-
-  // potfile = fopen(name_32, "r")
-
-  // char info_pot;
-  // getline(potfile, info_pot);
-  // getline(potfile, if_g3_pot);
-  // getline(potfile, if_g4_pot);
-  // !std::cout << "!!!!! PairLS debug mode !!!!! " << " I am in a void PairLS::r_pot_ls_is1_is2" << std::endl;
-  // !std::cout << "!!!!! PairLS debug mode !!!!! " << " name_32 is " << name_32 << std::endl;
 
   if(comm->me == 0) 
   {
-    // !std::cout << "!!!!! PairLS debug mode !!!!! " << " if(comm->me == 0) condition is valid " << std::endl;
     PotentialFileReader reader(lmp, name_32, "ls");
-    // !std::cout << "!!!!! PairLS debug mode !!!!! " << " PotentialFileReader instance is created" << std::endl;
 
     try {
 
@@ -1009,7 +882,6 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
       // read(23,'(A128)') info_pot
 
       reader.skip_line();  // the unnessessary information in the 1st line
-      // !std::cout << " The 1st line is skipped" << std::endl;
 
       // wr_pot_ls_is1_is2.f (57-60):
       // read(23,*) n_sp_fi
@@ -1018,14 +890,11 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
       // enddo
 
       n_sp_fi[is1][is2] = reader.next_int();
-      // !std::cout << " n_sp_fi[" << is1 << "][" << is2 << "] = " << n_sp_fi[is1][is2] << std::endl;
       for (int n = 0; n < n_sp_fi[is1][is2]; n++)
       {
         ValueTokenizer sp_fi_values = reader.next_values(2);
         R_sp_fi[is1][is2][n] = lcf*sp_fi_values.next_double();
         a_sp_fi[is1][is2][n] = ecf*sp_fi_values.next_double();
-        // !std::cout << " R_sp_fi[" << n << "][" << is1 << "][" << is2 << "] = " << R_sp_fi[is1][is2][n] << "   ";
-        // !std::cout << " a_sp_fi[" << n << "][" << is1 << "][" << is2 << "] = " << a_sp_fi[is1][is2][n] << std::endl;
       }
 
       // wr_pot_ls_is1_is2.f (61-63):
@@ -1034,11 +903,8 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
       // read(23,*) e0_ZBL(is1,is2)
 
       fip_rmin[is1][is2] = reader.next_double();
-      // !std::cout << " fip_rmin[" << is1 << "][" << is2 << "] = " << fip_rmin[is1][is2] << std::endl;
       Rmin_fi_ZBL[is1][is2] = lcf*reader.next_double();
-      // !std::cout << " Rmin_fi_ZBL[" << is1 << "][" << is2 << "] = " << Rmin_fi_ZBL[is1][is2] << std::endl;
       e0_ZBL[is1][is2] = ecf*reader.next_double();
-      // !std::cout << " e0_ZBL[" << is1 << "][" << is2 << "] = " << e0_ZBL[is1][is2] << std::endl;
 
       // wr_pot_ls_is1_is2.f (65-73):
       // do i=1,n_sp_fi
@@ -1056,16 +922,11 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
       {
         R_sp_fi[is2][is1][n] = lcf*R_sp_fi[is1][is2][n];
         a_sp_fi[is2][is1][n] = ecf*a_sp_fi[is1][is2][n];
-        // !std::cout << " R_sp_fi[" << n << "][" << is2 << "][" << is1 << "] = " << R_sp_fi[is2][is1][n] << "   ";
-        // !std::cout << " a_sp_fi[" << n << "][" << is2 << "][" << is1 << "] = " << a_sp_fi[is2][is1][n] << std::endl;
       }
 
       fip_rmin[is2][is1] = fip_rmin[is1][is2];
-      // !std::cout << " fip_rmin[" << is2 << "][" << is1 << "] = " << fip_rmin[is2][is1] << std::endl;
       Rmin_fi_ZBL[is2][is1] = lcf*Rmin_fi_ZBL[is1][is2];
-      // !std::cout << " Rmin_fi_ZBL[" << is2 << "][" << is1 << "] = " << Rmin_fi_ZBL[is2][is1] << std::endl;
       e0_ZBL[is2][is1] = ecf*e0_ZBL[is1][is2];
-      // !std::cout << " e0_ZBL[" << is2 << "][" << is1 << "] = " << e0_ZBL[is2][is1] << std::endl;
 
       // wr_pot_ls_is1_is2.f (76-82):
       // read(23,*) n_sp_ro
@@ -1078,14 +939,11 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
 
       n_sp_ro[is1][is2] = reader.next_int();
       n_sp_ro[is2][is1] = n_sp_ro[is1][is2];
-      // !std::cout << " n_sp_ro[" << is1 << "][" << is2 << "] = " << n_sp_ro[is1][is2] << std::endl;
       for (int n = 0; n < n_sp_ro[is1][is2]; n++)
       {
         ValueTokenizer sp_ro_is1_values = reader.next_values(2);
         R_sp_ro[is1][is2][n] = lcf*sp_ro_is1_values.next_double();
         a_sp_ro[is1][is2][n] = ecf*sp_ro_is1_values.next_double();
-        // !std::cout << " R_sp_ro[" << n << "][" << is1 << "][" << is2 << "] = " << R_sp_ro[is1][is2][n] << "   ";
-        // !std::cout << " a_sp_ro[" << n << "][" << is1 << "][" << is2 << "] = " << a_sp_ro[is1][is2][n] << std::endl;
       }    
 
       for (int n = 0; n < n_sp_ro[is2][is1]; n++)
@@ -1093,8 +951,6 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
         ValueTokenizer sp_ro_is2_values = reader.next_values(2);
         R_sp_ro[is2][is1][n] = lcf*sp_ro_is2_values.next_double();
         a_sp_ro[is2][is1][n] = ecf*sp_ro_is2_values.next_double();
-        // !std::cout << " R_sp_ro[" << n << "][" << is2 << "][" << is1 << "] = " << R_sp_ro[is2][is1][n] << "   ";
-        // !std::cout << " a_sp_ro[" << n << "][" << is2 << "][" << is1 << "] = " << a_sp_ro[is2][is1][n] << std::endl;
       }   
 
       // wr_pot_ls_is1_is2.f (85-88):
@@ -1105,20 +961,15 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
 
       ValueTokenizer n_sp_f_is1_values = reader.next_values(2);
       n_sp_f[is2][is1] = n_sp_f_is1_values.next_int();
-      // !std::cout << " n_sp_f[" << is2 << "][" << is1 << "] = " << n_sp_f[is2][is1] << std::endl;
       n_f3[is1] = n_sp_f_is1_values.next_int();
-      // !std::cout << " n_f3[" << is1 << "] = " << n_f3[is1] << std::endl;
       for (int n = 0; n < n_sp_f[is2][is1]; n++)
       {
         ValueTokenizer sp_f_is1_values = reader.next_values(n_f3[is1]+1);
         R_sp_f[is2][is1][n] = lcf*sp_f_is1_values.next_double();
-        // !std::cout << " R_sp_f[" << n << "][" << is2 << "][" << is1 << "] = " << R_sp_f[is2][is1][n] << "   ";
         for (int n1 = 0; n1 < n_f3[is1]; n1++)
         {
           a_sp_f3[is2][is1][n1][n] = ecf*sp_f_is1_values.next_double();
-          // !std::cout << " a_sp_f[" << n << "][" << n1 << "]["<< is2 << "][" << is1 << "] = " << a_sp_f3[is2][is1][n1][n] << "  ";
         }
-        // !std::cout << std::endl;
 
       }
 
@@ -1130,20 +981,15 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
 
       ValueTokenizer n_sp_f_is2_values = reader.next_values(2);
       n_sp_f[is1][is2] = n_sp_f_is2_values.next_int();
-      // !std::cout << " n_sp_f[" << is1 << "][" << is2 << "] = " << n_sp_f[is1][is2] << std::endl;
       n_f3[is2] = n_sp_f_is2_values.next_int();
-      // !std::cout << " n_f3[" << is2 << "] = " << n_f3[is2] << std::endl;
       for (int n = 0; n < n_sp_f[is1][is2]; n++)
       {
         ValueTokenizer sp_f_is2_values = reader.next_values(n_f3[is2]+1);
         R_sp_f[is1][is2][n] = lcf*sp_f_is2_values.next_double();
-        // !std::cout << " R_sp_f[" << n << "][" << is1 << "][" << is2 << "] = " << R_sp_f[is1][is2][n] << "   ";
         for (int n1 = 0; n1 < n_f3[is2]; n1++)
         {
           a_sp_f3[is1][is2][n1][n] = ecf*sp_f_is2_values.next_double();
-          // !std::cout << " a_sp_f[" << n << "][" << n1 << "]["<< is1 << "][" << is2 << "] = " << a_sp_f3[is1][is2][n1][n] << "  ";
         }
-        // !std::cout << std::endl;
 
       }
 
@@ -1154,6 +1000,7 @@ void PairLS::r_pot_ls_is1_is2(char *name_32, int is1, int is2, double lcf, doubl
   }
 
   // Start broadcasting binary potential information to other procs using cycles
+  MPI_Bcast(&if_g3_pot, 1, MPI_INT, 0, world);
   MPI_Bcast(&n_sp_fi[is1][is2], 1, MPI_INT, 0, world);
   for (int n = 0; n < n_sp_fi[is1][is2]; n++)
   {
@@ -2098,14 +1945,11 @@ void PairLS::LA30(int n, double *A, double *B, double *C, double *D, double *X, 
 // functions for calculating energies and forces
 
 // e_force_fi_emb.f
-// void PairLS::e_force_fi_emb(double *e_at, double **f_at, double *px_at, double *py_at, double *pz_at,  double **r_at, int *i_sort_at, int n_at, double *sizex, double *sizey, double *sizez)
-// void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double *px_at, double *py_at, double *pz_at,  double **r_at, int *i_sort_at, int n_at, double sizex, double sizey, double sizez)
-void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_at, int *i_sort_at, int n_at, double sizex, double sizey, double sizez)
+// void PairLS::e_force_fi_emb(double *e_at, double **f_at, double *px_at, double *py_at, double *pz_at,  double **r_at, int *type, int nlocal, double *sizex, double *sizey, double *sizez)
+// void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double *px_at, double *py_at, double *pz_at,  double **r_at, int *type, int nlocal, double sizex, double sizey, double sizez)
+void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, double **r_at)
 {
 
-  // Scalar Arguments
-  double e_sum, pressure, sxx, syy, szz;
-  
   // Local Scalars
   int i, j, ii, jj, jnum, is, js, li, lj;
   int n_i, in_list;
@@ -2114,8 +1958,8 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   double roi, roj, w, ropi, ropj, w1, w2, w3;
   int i1, i2, i3, iw;
 
-  // // Local Arrays
-  // double *rosum;
+  // Local Arrays
+  double *rosum_global, *rosum_global_proc;
 
   // pointers to LAMMPS arrays 
 
@@ -2128,47 +1972,42 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
   numneigh = listfull->numneigh;     // # of J neighbors for each I atom (the length of each these neigbor list)
   firstneigh = listfull->firstneigh; // ptr to 1st J int value of each I atom (the pointer to the list of neighbors of "i")
 
-
-  // standard (half) neighbor list
-  // int *ilist,*jlist,*numneigh,**firstneigh;
-  // int inum = listhalf->inum; // # of I atoms neighbors are stored for (the length of the neighborlists list)
-  // int gnum = listhalf->gnum; // # of ghost atoms neighbors are stored for
-
-  // ilist = listhalf->ilist;           // local indices of I atoms (list of "i" atoms for which neighbor lists exist)
-  // numneigh = listhalf->numneigh;     // # of J neighbors for each I atom (the length of each these neigbor list)
-  // firstneigh = listhalf->firstneigh; // ptr to 1st J int value of each I atom (the pointer to the list of neighbors of "i")
-
-
-  int nlocal = atom->nlocal;         // nlocal == n_at for this function
+  int nlocal = atom->nlocal;         // nlocal == nlocal for this function
   int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
   tagint *tag = atom->tag;
+  bigint nglobal = atom->natoms;
+  int *type = atom->type;
+
+  // arrays for virial computation
+  double fi[3], deli[3];
 
   memory->create(rosum, nall, "PairLS:rosum");
+  memory->create(rosum_global_proc, nglobal, "PairLS:rosum_global_proc");
+  memory->create(rosum_global, nglobal, "PairLS:rosum_global");
  
-
-  sizex05 = sizex*0.5;
-  sizey05 = sizey*0.5;
-  sizez05 = sizez*0.5;
-  // std::cout << "!!!!! PairLS debug mode !!!!! " << " e_force_fi_emb rr_pot[js][is]"  << std::endl;
-
   for (is = 1; is <= n_sort; is++)
   {
     for (js = 1; js <= n_sort; js++)
     {
       rr_pot[js][is] = R_sp_fi[js][is][n_sp_fi[js][is]-1]*R_sp_fi[js][is][n_sp_fi[js][is]-1];
-      // rr_pot[js][is] = pow(R_sp_fi[js][is][n_sp_fi[js][is]-1],2);
       // rr_pot[js][is] = cutsq[js][is];
-      // std::cout << " rr_pot["<<js<<"]["<<is<<"]  = " << rr_pot[js][is]  << std::endl;
     }
   }
   
- // set rosum = {0.0} as it was done for rho in pair_eam.cpp (182-184);
-  if (newton_pair) {
-    for (i = 0; i < nall; i++) rosum[i] = 0.0;
-  } else for (i = 0; i < nlocal; i++) rosum[i] = 0.0;
+  for (i = 0; i < nlocal; i++)
+  {
+    e_at[i] = 0.0;
+    rosum[i] = 0.0;
+  } 
 
-  // == calc rosum(n_at) =========================>
+  for (i = 0; i < nglobal; i++) 
+  {
+    rosum_global_proc[i] = 0.0;
+    rosum_global[i] = 0.0;
+  }
+
+  // == calc rosum(nlocal) =========================>
 
   // Loop over the LAMMPS full neighbour list 
   for (ii = 0; ii < inum; ii++) // inum is the # of I atoms neighbors are stored for
@@ -2177,145 +2016,80 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
     x = r_at[i][0];
     y = r_at[i][1];
     z = r_at[i][2];
-    is = i_sort_at[i];
+    is = type[i];
     jnum = numneigh[i];    // # of J neighbors for the atom i
     jlist = firstneigh[i]; // ptr to 1st J int value of the atom i
-    // std::cout << "There are " << jnum << " neighbours of atom " << i << std::endl;
     int n_neighb = 0;
     for (jj = 0; jj < jnum; jj++) 
     {
       j = jlist[jj];  // local or ghost index of atom j
       j &= NEIGHMASK;  // from pair_eam.cpp 
-      // std::cout << "j = " << j << std::endl;
-      js = i_sort_at[j];
+      js = type[j];
       xx = r_at[j][0] - x;
       yy = r_at[j][1] - y;
       zz = r_at[j][2] - z;
-      // if (periodic[0] && xx >  sizex05) xx = xx - sizex;
-      // if (periodic[0] && xx < -sizex05) xx = xx + sizex;
-      // if (periodic[1] && yy >  sizey05) yy = yy - sizey;
-      // if (periodic[1] && yy < -sizey05) yy = yy + sizey;
-      // if (periodic[2] && zz >  sizez05) zz = zz - sizez;
-      // if (periodic[2] && zz < -sizez05) zz = zz + sizez;
       rr = xx*xx + yy*yy + zz*zz;
-      // // !std::cout << "r = " << sqrt(rr) << std::endl;
       if (rr < rr_pot[js][is]) 
       {
         r = sqrt(rr);
         roj = fun_ro(r, js, is);
         rosum[i] += roj;
-        // for half list
-          // lj = atom->map(tag[j]); // mapped local index of atom j
-          // roj = fun_ro(r, is, js);
-          // if (newton_pair || j < nlocal) rosum[j] += roj;
-        // end for half list
         w = fun_fi(r, is, js);
-        // if (eflag > 0) 
-        // {
-        //   // !std::cout << "eflag [" << i << "] = " << eflag << std::endl; 
-        //   // !std::cout << "eflag_atom = " << eflag_atom << std::endl; 
-        //   if (eflag_atom) e_at[i] += w;
-        // } 
+        // if (eflag_atom) e_at[i] += w;
         e_at[i] += w;
-        // std::cout << "rr < rr_pot["<<js<<"]["<<is<<"] j = " << j << " rr =" << rr << " r =" << r << " roj =" << roj << " fun_fi("<<r<<","<<is<<","<<js<<") =" << w << std::endl;
         n_neighb += 1;
       }
     }
-    // std::cout << tag[i] << " n_neighb = " << n_neighb << "   rosum[  " << tag[i] << "   ] = " << rosum[i] << std::endl;
-    // std::cout << "e_at[" << i+1 << "]_fi = " << e_at[i] << std::endl;
   }
-  //////////////////////////////////////////////////
-  // std::cout << "Finished 1st loop over the LAMMPS full neighbour list in e_force_fi_emb" << std::endl;
 
-  // == calc energies: e_at(n_at) ==>
-  for (i = 0; i < n_at; i++)
+  // == calc energies: e_at(nlocal) ==>
+  for (i = 0; i < nlocal; i++)
   {
-    // // !std::cout << "i = " << i << std::endl;
-    // // !std::cout << "e_at[" << i << "] += " << e_at[i] << std::endl;
-    // with full meighbor list
-    w = fun_emb(rosum[i], i_sort_at[i]) + 0.5*e_at[i];
-    // with half neighbor list
-    // w = fun_emb(rosum[i], i_sort_at[i]) + e_at[i];
+    w = fun_emb(rosum[i], type[i]) + 0.5*e_at[i];
     e_at[i] = w;
-    eng_vdwl += w;
-    // std::cout << "e_at[" << i+1 << "]_fi_emb = " << e_at[i] << std::endl;
+    eng_vdwl += w;        // adding fi_emb energy to the accumulated energy
+    if (eflag_atom) eatom[i] = e_at[i];  // adding fi_emb energy to the per-atom energy
   }
-  // !std::cout << "Finished calc energies: e_at(n_at)  " << std::endl;
 
-  // communicate and sum densities
-
-
-  // == calc funp_emb(n_at) and put one into rosum(n_at) ==>
-  // for (i = 0; i < n_at; i++)
-  // {
-  //   rosum[i] = funp_emb(rosum[i], i_sort_at[i]);
-  //   // std::cout << "rosum[" << i+1 << "]_fi_emb = " << rosum[i] << std::endl;
-  // }
-  for (i = 0; i < nall; i++)
+  // == calc funp_emb(nlocal) and put one into rosum(nlocal) ==>
+  for (i = 0; i < nlocal; i++)
   {
-    if (i < nlocal) // set rosum for local atoms 
-    {
-      // std::cout << tag[i] << "  funp_emb( " << rosum[i] << " , " << i_sort_at[i]<< " ) = ";
-      rosum[i] = funp_emb(rosum[i], i_sort_at[i]);
-      // std::cout << rosum[i] << std::endl;
-    }
-    // else // set rosum for ghost atoms 
-    // {
-    //   li = atom->map(tag[i]); // mapped local index of atom i
-    //   if (li > 0) rosum[i] = funp_emb(rosum[li], i_sort_at[li]); // if ghost atoms are owned by this proc due to pbc
-    //   else rosum[i] = funp_emb(rosum[i], i_sort_at[i]); // if ghost atoms are owned by other proc
-    // } 
+      rosum_global_proc[tag[i]-1] = funp_emb(rosum[i], type[i]); // set rosum for global atom id's on this proc
+      rosum[i] = funp_emb(rosum[i], type[i]); // set rosum for local atom id's 
   }
-  // !std::cout << "Finished calc funp_emb(n_at) and put one into rosum(n_at)C  " << std::endl;
 
-  if (newton_pair) comm->reverse_comm_pair(this);
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(rosum_global_proc,rosum_global,nglobal,MPI_DOUBLE,MPI_SUM,world); // reducing global array with rosum
 
-
-  //c
-  //c == calc forces: f_at(3,n_at) ==============================>
+  //c == calc forces: f_at(3,nlocal) ==============================>
   // may be this is an unnessessarily cycle as these arrays should be zeroed earlier
-  for (i = 0; i < n_at; i++)
+  for (i = 0; i < nlocal; i++)
   {
     f_at[i][0] = 0.0; 
     f_at[i][1] = 0.0; 
     f_at[i][2] = 0.0; 
   }
-  // !std::cout << "Finished calc f_at[i][0] = 0.0 etc.  " << std::endl;
-
-  pressure = 0.0;
-  // std::cout << "!!!!! PairLS debug mode !!!!! " << " start calculating forces in e_force_fi_emb"  << std::endl;
 
   // Loop over the Verlet"s list
   for (ii = 0; ii < inum; ii++) // inum is the # of I atoms neighbors are stored for
   {
     i = ilist[ii];  // local index of atom i
     // li = atom->map(tag[i]);    // mapped local index of atom i
-    // std::cout << "Local index of atom i = " << i << "  li = " << li << std::endl;
-    // std::cout << "Global index of atom i = " << tag[i] << std::endl;
     x = r_at[i][0];
     y = r_at[i][1];
     z = r_at[i][2];
-    is = i_sort_at[i];
+    is = type[i];
     jnum = numneigh[i];    // # of J neighbors for the atom i
     jlist = firstneigh[i]; // ptr to 1st J int value of the atom i
-    // // !std::cout << "There are " << jnum << " neighbours of atom " << i << "  ";
-    int n_neighb = 0;
     for (jj = 0; jj < jnum; jj++) 
     {
       j = jlist[jj];  // index of atom j (maybe local or ghost)
       // j &= NEIGHMASK;  // from pair_eam.cpp 
       lj = atom->map(tag[j]); // mapped local index of atom j
-      // std::cout << "j = " << j << "  lj = " << lj << std::endl;
-      js = i_sort_at[j];
+      js = type[j];
       xx = r_at[j][0] - x;
       yy = r_at[j][1] - y;
       zz = r_at[j][2] - z;
-      // if (periodic[0] && xx >  sizex05) xx = xx - sizex;
-      // if (periodic[0] && xx < -sizex05) xx = xx + sizex;
-      // if (periodic[1] && yy >  sizey05) yy = yy - sizey;
-      // if (periodic[1] && yy < -sizey05) yy = yy + sizey;
-      // if (periodic[2] && zz >  sizez05) zz = zz - sizez;
-      // if (periodic[2] && zz < -sizez05) zz = zz + sizez;
       rr = xx*xx + yy*yy + zz*zz;
       if (rr < rr_pot[js][is]) 
       {
@@ -2330,91 +2104,54 @@ void PairLS::e_force_fi_emb(int eflag, double *e_at, double **f_at, double **r_a
         {
           ropj = funp_ro(r, js, is);
         }
-        if (lj >= 0) 
-        {
-          w = ((rosum[i]*ropj + rosum[lj]*ropi) + funp_fi(r, is, js))*r1; // if j is a ghost atom which correspond to local atom on this proc
-        }
-        else 
-        {
-          // std::cout << " lj<=0
-          w = ((rosum[i]*ropj + rosum[j]*ropi) + funp_fi(r, is, js))*r1;  
-        }
+        w = ((rosum[i]*ropj + rosum_global[tag[j]-1]*ropi) + funp_fi(r, is, js))*r1; // if j is a ghost atom atom which correspond to atom from other proc we take its rosum from the rosum_global array
         w1 = w*xx; 
         w2 = w*yy; 
         w3 = w*zz;
         f_at[i][0] += w1;
         f_at[i][1] += w2; // add the fi force j = >i;
         f_at[i][2] += w3;
-        // if (newton_pair || j < nlocal) 
-        // {
-        //   f_at[j][0] -= w1;
-        //   f_at[j][1] -= w1;
-        //   f_at[j][2] -= w1;
-        // }
-        // if (tag[i] == 350)
-        // {
-        // // if (lj => 0) 
-        // // {
-        //   // std::cout << " i = " << tag[i] << " j = "<< tag[j] << "  rr_pot["<<js<<"]["<<is<<"] j = " << tag[j] << " rr =" << rr << " r =" << r << " ropi =" << ropi << " ropj =" << ropj  << " funp_fi("<<r<<","<<is<<","<<js<<") =" << funp_fi(r, is, js)  << " rosum["<<tag[i]<<"] = "<<rosum[i] << " rosum["<<tag[j]<<"] = "<<rosum[lj] << "  w = "<< w << "  w1 = "<< w1 << "  w2 = "<< w2 << "  w3 = "<< w3 << std::endl;
-        // // }
-        // // else 
-        // // {
-        // //   std::cout << "rr < rr_pot["<<js<<"]["<<is<<"] j = " << j << " rr =" << rr << " r =" << r << " ropi =" << ropi << " ropj =" << ropj  << " funp_fi("<<r<<","<<is<<","<<js<<") =" << funp_fi(r, is, js)  << " rosum["<<i<<"] = "<<rosum[i] << " rosum["<<j<<"] = "<<rosum[j] << "  w = "<< w << "  w1 = "<< w1 << "  w2 = "<< w2 << "  w3 = "<< w3 << std::endl;
-        // // }
-        // }
-        // std::cout << "r = " << r <<" xx = " << xx << " yy = " << yy << " zz = " << zz << "  w1 =" << w1 << "  w2 =" << w2 << "  w3 =" << w3 << std::endl;
-        // std::cout << "r = " << r <<" xx = " << xx << " yy = " << yy << " zz = " << zz << "  f_at["<<i<<"][0]=" << f_at[i][0] << "  f_at["<<i<<"][1] =" << f_at[i][1] << "  f_at["<<i<<"][2] =" << f_at[i][2] << std::endl;
-        n_neighb += 1;
+
+        /* virial computation through the v_tally method of the parent pair class */
+        // fi[0] = w1;
+        // fi[1] = w2;
+        // fi[2] = w3;
+        // deli[0] = xx;
+        // deli[1] = yy;
+        // deli[2] = zz;
+        // // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
+        // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+
+        /* direct virial computation */
+        if (vflag_atom)
+        {
+          vatom[i][0] += -0.5*w1*xx;
+          vatom[i][1] += -0.5*w2*yy;
+          vatom[i][2] += -0.5*w3*zz;
+          vatom[i][3] += -0.5*w2*xx;
+          vatom[i][4] += -0.5*w3*xx;
+          vatom[i][5] += -0.5*w3*yy;
+        }
       }
     }
-    // std::cout << " There are " << n_neighb << " considered pair and centrosymmetric many-body interactions for atom "<< i <<" with " <<x<<" "<<y<<"  "<<z<<" coordinates"<< std::endl;
-    // std::cout << " There are " << n_neighb << " considered pair and centrosymmetric many-body interactions for atom "<< tag[i] << std::endl;
-    // std::cout << "f_at[" << i+1 << "]_fi_emb = " << f_at[i][0] << " " << f_at[i][1] << " "  << f_at[i][2]<< std::endl;
   }
-  // std::cout << "Finished 2nd loop over the LAMMPS full neighbour list in e_force_fi_emb" << std::endl;
-  // std::cout << "!!!!! PairLS debug mode !!!!! " << " End calculating forces in e_force_fi_emb"  << std::endl;
-
-  // w = 0.5*(-1.0)/(sizex*sizey*sizez);
-  // for (i = 0; i < n_at; i++)
-  // {
-  //   px_at[i] = w*px_at[i];
-  //   py_at[i] = w*py_at[i];
-  //   pz_at[i] = w*pz_at[i];
-  // }
-
-  // double r_at_i_tot, f_at_i_tot;
-  // std::cout << "e_force_fi_emb on timestep " << update->ntimestep << std::endl;
-  // // std::cout << "i_at  e_at       r_at_tot       f_at_tot" << std::endl;
-  // // std::cout << "i_at_gl     x        y        z       e_at      f_x        f_y        f_z" << std::endl;
-  // std::cout << "i_at  e_at       f_x        f_y        f_z" << std::endl;
-  // for (int i = 0; i < nlocal; i++)
-  // {
-  //   // r_at_i_tot = sqrt(r_at[i][0]*r_at[i][0] + r_at[i][1]*r_at[i][1] + r_at[i][2]*r_at[i][2]);
-  //   // f_at_i_tot = sqrt(f_at[i][0]*f_at[i][0] + f_at[i][1]*f_at[i][1] + f_at[i][2]*f_at[i][2]);
-  //   // std::cout << i+1  << "    " << e_at[i] << "    " << r_at_i_tot << "    " << f_at_i_tot << std::endl;
-  //   // std::cout << tag[i] << "   " << r_at[i][0] << " " << r_at[i][1] << " " << r_at[i][2] <<"    " << e_at[i] << " " << f_at[i][0] << " " << f_at[i][1] << " " << f_at[i][2] << std::endl;
-  //   std::cout << tag[i] << "  " << e_at[i] << " " << f_at[i][0] << " " << f_at[i][1] << " " << f_at[i][2] << std::endl;
-  //   // std::cout << i+1 << "    " << e_at[i] << " " << f[i][0] << " " << f[i][1] << " " << f[i][2] << std::endl;
-  // }
 
   memory->destroy(rosum);
+  memory->destroy(rosum_global);
+  memory->destroy(rosum_global_proc);
   return;
 }
 
-// void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double *px_at, double *py_at, double *pz_at,  double **r_at, int *i_sort_at, int n_at, double sizex, double sizey, double sizez)
-void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, int *i_sort_at, int n_at, double sizex, double sizey, double sizez)
+// void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, int *type, int nlocal, double sizex, double sizey, double sizez)
+void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, double **r_at)
 {
-  // Scalar Arguments
-  double e_sum, pressure, sxx, syy, szz;
-  
-  // Local Scalars
   int i,j,k,ii,jj,kk,l,i1,i2,i3, li, lj;
   int n_i,in_list,n_neighb;
   double w,ww,funfi,funfip;
   double e_angle,Gmn_i,eta,fung,fungp,Gmn[3],Dmn;
-  double sizex05,sizey05,sizez05, x,y,z,xx,yy,zz,rop;
+  double x,y,z,xx,yy,zz,rop;
   double xx0,yy0,zz0,rr,r,r1,w1,w2,w3,cosl,wp;
-  double p_Gmn[3],fx,fy,fz;
+  double p_Gmn[6],fx,fy,fz;
   int is,js,ks,iw,i_bas,i1_bas,i2_bas,jnum;
 
   // Local Arrays
@@ -2423,54 +2160,107 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
   double evek_x[max_neighb], evek_y[max_neighb], evek_z[max_neighb];
   double vek_x[max_neighb], vek_y[max_neighb], vek_z[max_neighb], r_1[max_neighb];
   int nom_j[max_neighb];
-  // arrays in heap
-  // double **funf, **funfp;
-  // double *evek_x, *evek_y, *evek_z;
-  // double *vek_x, *vek_y, *vek_z, *r_1;
-  // int *nom_j;
+
   tagint *tag = atom->tag;
+  bigint nglobal = atom->natoms;
+
+  // arrays for virial computation
+  double fi[3], deli[3];
+
+  // Arrays for parallel computing
+  double *f_at_g3_x, *f_at_g3_proc_x;
+  double *f_at_g3_y, *f_at_g3_proc_y;
+  double *f_at_g3_z, *f_at_g3_proc_z;
+  double *vatom_g3_xx, *vatom_g3_proc_xx;
+  double *vatom_g3_yy, *vatom_g3_proc_yy;
+  double *vatom_g3_zz, *vatom_g3_proc_zz;
+  double *vatom_g3_xy, *vatom_g3_proc_xy;
+  double *vatom_g3_xz, *vatom_g3_proc_xz;
+  double *vatom_g3_yz, *vatom_g3_proc_yz;
+  // double **vatom_g3, **vatom_g3_proc;
+
+
 
   // pointers to LAMMPS arrays 
   int *ilist,*jlist,*numneigh,**firstneigh;
   int inum = listfull->inum; // # of I atoms neighbors are stored for (the length of the neighborlists list)
   int gnum = listfull->gnum; // # of ghost atoms neighbors are stored for
+  int *type = atom->type;
 
-  // int inum_st = list->inum;
-  // int gnum_st = list->gnum;
 
   ilist = listfull->ilist;           // local indices of I atoms (list of "i" atoms for which neighbor lists exist)
   numneigh = listfull->numneigh;     // # of J neighbors for each I atom (the length of each these neigbor list)
   firstneigh = listfull->firstneigh; // ptr to 1st J int value of each I atom (the pointer to the list of neighbors of "i")
 
-  int nlocal = atom->nlocal;         // nlocal == n_at for this function
+  int nlocal = atom->nlocal;         // nlocal == nlocal for this function
   int nall = nlocal + atom->nghost;
   int newton_pair = force->newton_pair;
 
-  // memory allocation for local arrays
-  // memory->create(funf, max_neighb, mf3, "PairLS:funf_g3");
-  // memory->create(funfp, max_neighb, mf3, "PairLS:funfp_g3");
-  // memory->create(evek_x, max_neighb, "PairLS:evek_x_g3");
-  // memory->create(evek_y, max_neighb, "PairLS:evek_y_g3");
-  // memory->create(evek_z, max_neighb, "PairLS:evek_z_g3");
-  // memory->create(vek_x, max_neighb, "PairLS:vek_x_g3");
-  // memory->create(vek_y, max_neighb, "PairLS:vek_y_g3");
-  // memory->create(vek_z, max_neighb, "PairLS:vek_z_g3");
-  // memory->create(r_1, max_neighb, "PairLS:r_1_g3");
-  // memory->create(nom_j, max_neighb, "PairLS:nom_j_g3");
-  // std::cout << "!!!!! PairLS debug mode !!!!! " << " e_force_g3 rr_pot[js][is]"  << std::endl;
+  memory->create(f_at_g3_proc_x, nglobal, "PairLS:f_at_g3_proc_x");
+  memory->create(f_at_g3_proc_y, nglobal, "PairLS:f_at_g3_proc_y");
+  memory->create(f_at_g3_proc_z, nglobal, "PairLS:f_at_g3_proc_z");
+  memory->create(f_at_g3_x, nglobal, "PairLS:f_at_g3_x");
+  memory->create(f_at_g3_y, nglobal, "PairLS:f_at_g3_y");
+  memory->create(f_at_g3_z, nglobal, "PairLS:f_at_g3_z");
+
+  // memory->create(vatom_g3_proc, nglobal, 6, "PairLS:vatom_g3_proc");
+  // memory->create(vatom_g3, nglobal, 6, "PairLS:vatom_g3");
+  memory->create(vatom_g3_proc_xx, nglobal, "PairLS:vatom_g3_proc_xx");
+  memory->create(vatom_g3_proc_yy, nglobal, "PairLS:vatom_g3_proc_yy");
+  memory->create(vatom_g3_proc_zz, nglobal, "PairLS:vatom_g3_proc_zz");
+  memory->create(vatom_g3_proc_xy, nglobal, "PairLS:vatom_g3_proc_xy");
+  memory->create(vatom_g3_proc_xz, nglobal, "PairLS:vatom_g3_proc_xz");
+  memory->create(vatom_g3_proc_yz, nglobal, "PairLS:vatom_g3_proc_yz");
+  memory->create(vatom_g3_xx, nglobal, "PairLS:vatom_g3_xx");
+  memory->create(vatom_g3_yy, nglobal, "PairLS:vatom_g3_yy");
+  memory->create(vatom_g3_zz, nglobal, "PairLS:vatom_g3_zz");
+  memory->create(vatom_g3_xy, nglobal, "PairLS:vatom_g3_xy");
+  memory->create(vatom_g3_xz, nglobal, "PairLS:vatom_g3_xz");
+  memory->create(vatom_g3_yz, nglobal, "PairLS:vatom_g3_yz");
+
+
+  for (i = 0; i < nglobal; i++)
+  {
+    f_at_g3_x[i] = 0.0;
+    f_at_g3_y[i] = 0.0;
+    f_at_g3_z[i] = 0.0;
+    f_at_g3_proc_x[i] = 0.0;
+    f_at_g3_proc_y[i] = 0.0;
+    f_at_g3_proc_z[i] = 0.0;  
+    // vatom_g3[i][0] = 0.0;
+    // vatom_g3[i][1] = 0.0;
+    // vatom_g3[i][2] = 0.0;
+    // vatom_g3[i][3] = 0.0;
+    // vatom_g3[i][4] = 0.0;
+    // vatom_g3[i][5] = 0.0;
+    // vatom_g3_proc[i][0] = 0.0;
+    // vatom_g3_proc[i][1] = 0.0;
+    // vatom_g3_proc[i][2] = 0.0;
+    // vatom_g3_proc[i][3] = 0.0;
+    // vatom_g3_proc[i][4] = 0.0;
+    // vatom_g3_proc[i][5] = 0.0;  
+    vatom_g3_xx[i] = 0.0;
+    vatom_g3_yy[i] = 0.0;
+    vatom_g3_zz[i] = 0.0;
+    vatom_g3_xy[i] = 0.0;
+    vatom_g3_xz[i] = 0.0;
+    vatom_g3_yz[i] = 0.0;      
+    vatom_g3_proc_xx[i] = 0.0;
+    vatom_g3_proc_yy[i] = 0.0;
+    vatom_g3_proc_zz[i] = 0.0;
+    vatom_g3_proc_xy[i] = 0.0;
+    vatom_g3_proc_xz[i] = 0.0;
+    vatom_g3_proc_yz[i] = 0.0;
+  }
+
   for (is = 1; is <= n_sort; is++)
   {
     for (js = 1; js <= n_sort; js++)
     {
       rr_pot[js][is] = R_sp_f[js][is][n_sp_f[js][is]-1]*R_sp_f[js][is][n_sp_f[js][is]-1];
       // rr_pot[js][is] = cutsq[js][is];
-      // std::cout << " rr_pot["<<js<<"]["<<is<<"]  = " << rr_pot[js][is]  << std::endl;
     }
   }
-
-  sizex05 = sizex*0.5;
-  sizey05 = sizey*0.5;
-  sizez05 = sizez*0.5;
 
   //c == angle 3 ========================================================
 
@@ -2483,33 +2273,23 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
     x = r_at[i][0];
     y = r_at[i][1];
     z = r_at[i][2];
-    is = i_sort_at[i];
+    is = type[i];
     jlist = firstneigh[i]; // ptr to 1st J int value of the atom i
-    // std::cout << "There are " << jnum << " neighbours of atom " << i << std::endl;
     n_neighb = 0;
-    // // !std::cout << "i = " << i << std::endl;
 
     for (jj = 0; jj < jnum; jj++) 
     {
       j = jlist[jj];  // local or ghost index of atom j
-      // // !std::cout << "j = " << j << std::endl;
-      js = i_sort_at[j]; 
+      js = type[j]; 
       lj = atom->map(tag[j]);  // mapped local index of atom j
       xx = r_at[j][0] - x;
       yy = r_at[j][1] - y;
       zz = r_at[j][2] - z;
-      // if (periodic[0] && xx >  sizex05) xx = xx - sizex;
-      // if (periodic[0] && xx < -sizex05) xx = xx + sizex;
-      // if (periodic[1] && yy >  sizey05) yy = yy - sizey;
-      // if (periodic[1] && yy < -sizey05) yy = yy + sizey;
-      // if (periodic[2] && zz >  sizez05) zz = zz - sizez;
-      // if (periodic[2] && zz < -sizez05) zz = zz + sizez;
       rr = xx*xx + yy*yy + zz*zz;
       if (rr < rr_pot[js][is])
       {
         r = sqrt(rr);
         r1 = 1.0/r;
-        // std::cout << "r=" << r << std::endl;
       
         // calc the parameters for the angle part
         for (i_bas = 0; i_bas < n_f3[is]; i_bas++)
@@ -2526,29 +2306,25 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
         vek_y[n_neighb] = yy;
         vek_z[n_neighb] = zz;
         nom_j[n_neighb] = j;
-        // // !std::cout << " nom_j[" << n_neighb << "]= " <<  nom_j[n_neighb] << std::endl;
 
         n_neighb += 1;
       }
     }  // end loop over jj
-    // std::cout << "The parameters for the angle part are calculated for atom " << i << std::endl;
 
     // angle // angle // angle // angle // angle // angle // angle // angle // angle // angle // angle // angle // angle // angle
-    // // !std::cout << "n_neighb of atom " << i << " = " << n_neighb << std::endl;
-    // std::cout << "There are " << n_neighb << " j neighbours of atom " << tag[i] << " that will be considered for angle interactions"<< std::endl;
 
     e_angle = 0.0;
     if (n_neighb > 1) 
     {
-      // // !std::cout << "n_neighb of atom " << i << " = " << n_neighb << std::endl;
       for (jj = 0; jj < n_neighb; jj++)
       {
         j = nom_j[jj]; // j is n in formul for Dmn and j is m in formul for Gmn;
         lj = atom->map(tag[j]);  // mapped local index of atom j
-        // // !std::cout << "jj = " << jj << std::endl;
-        // // !std::cout << "j = " << j << std::endl;
-        // std::cout << " nom_j[" << jj+1 << "]= " <<  tag[j] << std::endl;
-        js = i_sort_at[j];
+        js = type[j];
+        
+        xx = r_at[j][0] - x;
+        yy = r_at[j][1] - y;
+        zz = r_at[j][2] - z;
 
         Dmn = 0.0;
         Gmn[0] = 0.0;
@@ -2557,111 +2333,145 @@ void PairLS::e_force_g3(int eflag, double *e_at, double **f_at, double **r_at, i
         p_Gmn[0] = 0.0;
         p_Gmn[1] = 0.0;
         p_Gmn[2] = 0.0;
+        p_Gmn[3] = 0.0;
+        p_Gmn[4] = 0.0;
+        p_Gmn[5] = 0.0;        
         for (kk = 0; kk < n_neighb; kk++)
         {
           if (kk == jj) continue;
           k = nom_j[kk];
-          ks = i_sort_at[k];
+          ks = type[k];
           Gmn_i = 0.0;
           eta = evek_x[jj]*evek_x[kk] + evek_y[jj]*evek_y[kk] + evek_z[jj]*evek_z[kk]; // cos_nmk;
-          // std::cout << "eta = " << eta << std::endl;
-          // Start fun_g3
+          // Start initialization of fun_g3
           int iii = int((eta - R_sp_g[0])*shag_sp_g);
           iii += 1; 
           if (iii >= n_sp_g[is][is]) iii = n_sp_g[is][is] - 1;
           double dr = eta - R_sp_g[iii-1];
           iii -= 1;
-          // End fun_g3
+          // End initialization of fun_g3
           for (i1_bas = 0; i1_bas < n_f3[is]; i1_bas++) // do i1_bas = 1, n_f3(is)
           {
             for (i2_bas = 0; i2_bas < n_f3[is]; i2_bas++) // do i2_bas = 1, n_f3(is)
             {
-              // fung = 1.0;
-              // fung = fun_g3(eta, i1_bas, i2_bas, is);
-              // fungp = funp_g3(eta, i1_bas, i2_bas, is);
-              // optimized call of fun_g3 and funp_g3
+              // Start optimized call of fun_g3 and funp_g3
               fung = a_sp_g3[is][iii][i1_bas][i2_bas] + dr*(b_sp_g3[is][iii][i1_bas][i2_bas] + dr*(c_sp_g3[is][iii][i1_bas][i2_bas] + dr*(d_sp_g3[is][iii][i1_bas][i2_bas])));
               fungp = b_sp_g3[is][iii][i1_bas][i2_bas] + dr*(2.0*c_sp_g3[is][iii][i1_bas][i2_bas] + dr*(3.0*d_sp_g3[is][iii][i1_bas][i2_bas]));
-              // std::cout << "fungp = " << fungp << std::endl;
+              // End optimized call of fun_g3 and funp_g3
               Dmn += (funfp[jj][i1_bas]*funf[kk][i2_bas]*fung + funf[jj][i1_bas]*funf[kk][i2_bas]*fungp*(r_1[kk] - r_1[jj]*eta));
               Gmn_i += funf[jj][i1_bas]*funf[kk][i2_bas]*fungp;
-              // std::cout << "k = " << tag[k] << " j = " << tag[j]  << std::endl;
-              // std::cout << "Dmn += " << (funfp[jj][i1_bas]*funf[kk][i2_bas]*fung + funf[jj][i1_bas]*funf[kk][i2_bas]*fungp*(r_1[kk] - r_1[jj]*eta)) << std::endl;
-              // std::cout << "Gmn_i += " << funf[jj][i1_bas]*funf[kk][i2_bas]*fungp << std::endl;
               if (kk>jj) e_angle += funf[jj][i1_bas]*funf[kk][i2_bas]*fung;
-              // if (kk>jj) 
-              // {
-              //   // std::cout << "funf["<<tag[j]<<"]["<<i1_bas+1<<"]*funf["<<tag[k]<<"]["<<i2_bas+1<<"]*fung = "<<funf[jj][i1_bas]*funf[kk][i2_bas]*fung << std::endl;
-              //   std::cout << "funf["<<tag[j]<<"]["<<i1_bas+1<<"] = " << funf[jj][i1_bas] << std::endl;
-              //   std::cout << "funf["<<tag[k]<<"]["<<i2_bas+1<<"] = " << funf[kk][i2_bas] << std::endl;
-              //   std::cout << "fung = " << fung << std::endl;
-              // }
             }
           }
           w1 = Gmn_i*(r_1[jj]*r_1[kk]*(vek_x[jj] - vek_x[kk]));
           w2 = Gmn_i*(r_1[jj]*r_1[kk]*(vek_y[jj] - vek_y[kk]));
           w3 = Gmn_i*(r_1[jj]*r_1[kk]*(vek_z[jj] - vek_z[kk]));
-          // std::cout << "w1 = " << w1 << std::endl;
-          // std::cout << "w2 = " << w2 << std::endl;
-          // std::cout << "w3 = " << w3 << std::endl;
           Gmn[0] += w1;
           Gmn[1] += w2;
-          Gmn[2] += w3;
+          Gmn[2] += w3; 
 
-          // for pressure
-          // p_Gmn[0] = p_Gmn[0] - w1*(vek_x[jj] - vek_x[kk]);
-          // p_Gmn[1] = p_Gmn[1] - w2*(vek_y[jj] - vek_y[kk]);
-          // p_Gmn[2] = p_Gmn[2] - w3*(vek_z[jj] - vek_z[kk]);
+          // for virial computation
+          p_Gmn[0] -= w1*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[1] -= w2*(vek_y[jj]-vek_y[kk]);
+          p_Gmn[2] -= w3*(vek_z[jj]-vek_z[kk]);
+          p_Gmn[3] -= w2*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[4] -= w3*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[5] -= w3*(vek_y[jj]-vek_y[kk]);          
         }
 
-        f_at[i][0] += Dmn*evek_x[jj]; // force n = >m;
-        f_at[i][1] += Dmn*evek_y[jj];
-        f_at[i][2] += Dmn*evek_z[jj];
+        f_at_g3_proc_x[tag[i]-1] += Dmn*evek_x[jj];
+        f_at_g3_proc_y[tag[i]-1] += Dmn*evek_y[jj];
+        f_at_g3_proc_z[tag[i]-1] += Dmn*evek_z[jj];
 
-        f_at[lj][0] += (Gmn[0] - Dmn*evek_x[jj]);
-        f_at[lj][1] += (Gmn[1] - Dmn*evek_y[jj]);
-        f_at[lj][2] += (Gmn[2] - Dmn*evek_z[jj]);
+        f_at_g3_proc_x[tag[j]-1] += (Gmn[0] - Dmn*evek_x[jj]);
+        f_at_g3_proc_y[tag[j]-1] += (Gmn[1] - Dmn*evek_y[jj]);
+        f_at_g3_proc_z[tag[j]-1] += (Gmn[2] - Dmn*evek_z[jj]);
 
-        // for pressure
-        // w = 0.5*(-1.0)/(sizex*sizey*sizez);
-        // px_at[i] = px_at[i]/w + Dmn*evek_x[jj]*vek_x[jj];
-        // py_at[i] = py_at[i]/w + Dmn*evek_y[jj]*vek_y[jj];
-        // pz_at[i] = pz_at[i]/w + Dmn*evek_z[jj]*vek_z[jj];
-        // px_at[j] = px_at[j]/w + (p_Gmn[0] + Dmn*evek_x[jj]*vek_x[jj]);
-        // py_at[j] = py_at[j]/w + (p_Gmn[1] + Dmn*evek_y[jj]*vek_y[jj]);
-        // pz_at[j] = pz_at[j]/w + (p_Gmn[2] + Dmn*evek_z[jj]*vek_z[jj]);
+        // /* virial computation through the v_tally method of the parent pair class */
+        // fi[0] = Dmn*evek_x[jj];
+        // fi[1] = Dmn*evek_y[jj];
+        // fi[2] = Dmn*evek_z[jj];
+        // deli[0] = xx;
+        // deli[1] = yy;
+        // deli[2] = zz;
+        // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+        /* direct virial computation */
+        if (vflag_atom)
+        {
+          vatom_g3_proc_xx[tag[i]-1] += 0.5*Dmn*evek_x[jj]*vek_x[jj];
+          vatom_g3_proc_yy[tag[i]-1] += 0.5*Dmn*evek_y[jj]*vek_y[jj];
+          vatom_g3_proc_zz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_z[jj];
+          vatom_g3_proc_xy[tag[i]-1] += 0.5*Dmn*evek_y[jj]*vek_x[jj];
+          vatom_g3_proc_xz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_x[jj];
+          vatom_g3_proc_yz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_y[jj];
 
+          vatom_g3_proc_xx[tag[j]-1] += 0.5*(p_Gmn[0] + Dmn*evek_x[jj]*vek_x[jj]);
+          vatom_g3_proc_yy[tag[j]-1] += 0.5*(p_Gmn[1] + Dmn*evek_y[jj]*vek_y[jj]);
+          vatom_g3_proc_zz[tag[j]-1] += 0.5*(p_Gmn[2] + Dmn*evek_z[jj]*vek_z[jj]);
+          vatom_g3_proc_xy[tag[j]-1] += 0.5*(p_Gmn[3] + Dmn*evek_y[jj]*vek_x[jj]);
+          vatom_g3_proc_xz[tag[j]-1] += 0.5*(p_Gmn[4] + Dmn*evek_z[jj]*vek_x[jj]);
+          vatom_g3_proc_yz[tag[j]-1] += 0.5*(p_Gmn[5] + Dmn*evek_y[jj]*vek_z[jj]);          
+        }
       }
     }
-    // std::cout << "The energies and forces are calculated for atom " << i << std::endl;
-
     e_at[i] += e_angle;
+    if (eflag_atom) eatom[i] += e_angle;
     eng_vdwl += e_angle;
-    // std::cout << "e_at[ " << tag[i] << " ]_g3 = " << e_angle << std::endl;
-    // std::cout << "e_at[" << i+1 << "]_tot = " << e_at[i] << std::endl;
-    // std::cout << "f_at[" << i+1 << "]_tot = " << f_at[i][0] << " " << f_at[i][1] << " "  << f_at[i][2]<< std::endl;
   }
-  // !std::cout << "Finished loop over the LAMMPS full neighbour list in e_force_g3" << std::endl;
 
-  // w = 0.5*(-1.0)/(sizex*sizey*sizez);
-  // for (i = 0; i < n_at; i++)
-  // {
-  //   px_at[i] = w*px_at[i];
-  //   py_at[i] = w*py_at[i];
-  //   pz_at[i] = w*pz_at[i];
-  // }
 
-  // memory->destroy(funf);   
-  // memory->destroy(funfp);  
-  // memory->destroy(evek_x); 
-  // memory->destroy(evek_y); 
-  // memory->destroy(evek_z); 
-  // memory->destroy(vek_x);  
-  // memory->destroy(vek_y);  
-  // memory->destroy(vek_z);  
-  // memory->destroy(r_1);    
-  // memory->destroy(nom_j);  
-  
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(f_at_g3_proc_x,f_at_g3_x,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(f_at_g3_proc_y,f_at_g3_y,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(f_at_g3_proc_z,f_at_g3_z,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xx,vatom_g3_xx,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_yy,vatom_g3_yy,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_zz,vatom_g3_zz,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xy,vatom_g3_xy,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xz,vatom_g3_xz,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_yz,vatom_g3_yz,nglobal,MPI_DOUBLE,MPI_SUM,world);
+
+  for (i = 0; i < nlocal; i++)
+  {
+    f_at[i][0] += f_at_g3_x[tag[i]-1];
+    f_at[i][1] += f_at_g3_y[tag[i]-1];
+    f_at[i][2] += f_at_g3_z[tag[i]-1];
+    vatom[i][0] += -vatom_g3_xx[tag[i]-1]; 
+    vatom[i][1] += -vatom_g3_yy[tag[i]-1]; 
+    vatom[i][2] += -vatom_g3_zz[tag[i]-1]; 
+    vatom[i][3] += -vatom_g3_xy[tag[i]-1];
+    vatom[i][4] += -vatom_g3_xz[tag[i]-1];
+    vatom[i][5] += -vatom_g3_yz[tag[i]-1];
+  }
+
+  memory->destroy(f_at_g3_proc_x);
+  memory->destroy(f_at_g3_proc_y);
+  memory->destroy(f_at_g3_proc_z);
+  memory->destroy(f_at_g3_x);
+  memory->destroy(f_at_g3_y);
+  memory->destroy(f_at_g3_z);
+  // memory->destroy(vatom_g3_proc);
+  // memory->destroy(vatom_g3);
+  memory->destroy(vatom_g3_proc_xx);
+  memory->destroy(vatom_g3_proc_yy);
+  memory->destroy(vatom_g3_proc_zz);
+  memory->destroy(vatom_g3_proc_xy);
+  memory->destroy(vatom_g3_proc_xz);
+  memory->destroy(vatom_g3_proc_yz);
+  memory->destroy(vatom_g3_xx);
+  memory->destroy(vatom_g3_yy);
+  memory->destroy(vatom_g3_zz);
+  memory->destroy(vatom_g3_xy);
+  memory->destroy(vatom_g3_xz);
+  memory->destroy(vatom_g3_yz);
   return;
 }
 
