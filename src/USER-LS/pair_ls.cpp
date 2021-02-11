@@ -286,19 +286,42 @@ void PairLS::compute(int eflag, int vflag)
 
   if (if_g3_pot) e_force_g3(eflag, vflag, e_at, f, x);
 
-  /* computing per-atom virial */
-  for (int i = 0; i < nlocal; i++) 
-  {
-    vatom[i][0] = f[i][0]*x[i][0];
-    vatom[i][1] = f[i][1]*x[i][1];
-    vatom[i][2] = f[i][2]*x[i][2];
-    vatom[i][3] = f[i][1]*x[i][0];
-    vatom[i][4] = f[i][2]*x[i][0];
-    vatom[i][5] = f[i][2]*x[i][1];
-  }
+  /* computing per-atom virial (deprecated)*/
+  // for (int i = 0; i < nlocal; i++) 
+  // {
+  //   vatom[i][0] = f[i][0]*x[i][0];
+  //   vatom[i][1] = f[i][1]*x[i][1];
+  //   vatom[i][2] = f[i][2]*x[i][2];
+  //   vatom[i][3] = f[i][1]*x[i][0];
+  //   vatom[i][4] = f[i][2]*x[i][0];
+  //   vatom[i][5] = f[i][2]*x[i][1];
+  // }
 
-  /* computing global virial */
-  if (vflag_fdotr) virial_fdotr_compute();
+  /* computing global virial with pair function virial_fdotr_compute() (does not work correctly for unknown reasons)*/
+  // if (vflag_fdotr) virial_fdotr_compute();
+  /* computing global virial aa sum of per-atom contirbutions*/
+  if (vflag_fdotr)
+  {
+    // zeroing global virial to avoid inconsistence
+    for (int i = 0; i < nlocal; i++) 
+    {
+      virial[0] = 0.0;
+      virial[1] = 0.0;
+      virial[2] = 0.0;
+      virial[3] = 0.0;
+      virial[4] = 0.0;
+      virial[5] = 0.0;
+    }
+    for (int i = 0; i < nlocal; i++) 
+    {
+      virial[0] += vatom[i][0];
+      virial[1] += vatom[i][1];
+      virial[2] += vatom[i][2];
+      virial[3] += vatom[i][3];
+      virial[4] += vatom[i][4];
+      virial[5] += vatom[i][5];
+    }
+  }
 
   memory->destroy(e_at);
 }
@@ -2099,13 +2122,16 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
         // // if (evflag) ev_tally_xyz_full(i, 0.0, 0.0, w1, w2, w3, xx, yy, zz); // calculating fi_emb per-atom virial
         // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
 
-        // /* direct virial computation */
-        // vatom[i][0] += 0.5*w1*xx;
-        // vatom[i][1] += 0.5*w2*yy;
-        // vatom[i][2] += 0.5*w3*zz;
-        // vatom[i][3] += 0.5*w2*xx;
-        // vatom[i][4] += 0.5*w3*xx;
-        // vatom[i][5] += 0.5*w2*zz;
+        /* direct virial computation */
+        if (vflag_atom)
+        {
+          vatom[i][0] += 0.5*w1*xx;
+          vatom[i][1] += 0.5*w2*yy;
+          vatom[i][2] += 0.5*w3*zz;
+          vatom[i][3] += 0.5*w2*xx;
+          vatom[i][4] += 0.5*w3*xx;
+          vatom[i][5] += 0.5*w3*yy;
+        }
       }
     }
   }
@@ -2125,7 +2151,7 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
   double e_angle,Gmn_i,eta,fung,fungp,Gmn[3],Dmn;
   double x,y,z,xx,yy,zz,rop;
   double xx0,yy0,zz0,rr,r,r1,w1,w2,w3,cosl,wp;
-  double p_Gmn[3],fx,fy,fz;
+  double p_Gmn[6],fx,fy,fz;
   int is,js,ks,iw,i_bas,i1_bas,i2_bas,jnum;
 
   // Local Arrays
@@ -2145,6 +2171,15 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
   double *f_at_g3_x, *f_at_g3_proc_x;
   double *f_at_g3_y, *f_at_g3_proc_y;
   double *f_at_g3_z, *f_at_g3_proc_z;
+  double *vatom_g3_xx, *vatom_g3_proc_xx;
+  double *vatom_g3_yy, *vatom_g3_proc_yy;
+  double *vatom_g3_zz, *vatom_g3_proc_zz;
+  double *vatom_g3_xy, *vatom_g3_proc_xy;
+  double *vatom_g3_xz, *vatom_g3_proc_xz;
+  double *vatom_g3_yz, *vatom_g3_proc_yz;
+  // double **vatom_g3, **vatom_g3_proc;
+
+
 
   // pointers to LAMMPS arrays 
   int *ilist,*jlist,*numneigh,**firstneigh;
@@ -2168,6 +2203,22 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
   memory->create(f_at_g3_y, nglobal, "PairLS:f_at_g3_y");
   memory->create(f_at_g3_z, nglobal, "PairLS:f_at_g3_z");
 
+  // memory->create(vatom_g3_proc, nglobal, 6, "PairLS:vatom_g3_proc");
+  // memory->create(vatom_g3, nglobal, 6, "PairLS:vatom_g3");
+  memory->create(vatom_g3_proc_xx, nglobal, "PairLS:vatom_g3_proc_xx");
+  memory->create(vatom_g3_proc_yy, nglobal, "PairLS:vatom_g3_proc_yy");
+  memory->create(vatom_g3_proc_zz, nglobal, "PairLS:vatom_g3_proc_zz");
+  memory->create(vatom_g3_proc_xy, nglobal, "PairLS:vatom_g3_proc_xy");
+  memory->create(vatom_g3_proc_xz, nglobal, "PairLS:vatom_g3_proc_xz");
+  memory->create(vatom_g3_proc_yz, nglobal, "PairLS:vatom_g3_proc_yz");
+  memory->create(vatom_g3_xx, nglobal, "PairLS:vatom_g3_xx");
+  memory->create(vatom_g3_yy, nglobal, "PairLS:vatom_g3_yy");
+  memory->create(vatom_g3_zz, nglobal, "PairLS:vatom_g3_zz");
+  memory->create(vatom_g3_xy, nglobal, "PairLS:vatom_g3_xy");
+  memory->create(vatom_g3_xz, nglobal, "PairLS:vatom_g3_xz");
+  memory->create(vatom_g3_yz, nglobal, "PairLS:vatom_g3_yz");
+
+
   for (i = 0; i < nglobal; i++)
   {
     f_at_g3_x[i] = 0.0;
@@ -2175,7 +2226,31 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
     f_at_g3_z[i] = 0.0;
     f_at_g3_proc_x[i] = 0.0;
     f_at_g3_proc_y[i] = 0.0;
-    f_at_g3_proc_z[i] = 0.0;    
+    f_at_g3_proc_z[i] = 0.0;  
+    // vatom_g3[i][0] = 0.0;
+    // vatom_g3[i][1] = 0.0;
+    // vatom_g3[i][2] = 0.0;
+    // vatom_g3[i][3] = 0.0;
+    // vatom_g3[i][4] = 0.0;
+    // vatom_g3[i][5] = 0.0;
+    // vatom_g3_proc[i][0] = 0.0;
+    // vatom_g3_proc[i][1] = 0.0;
+    // vatom_g3_proc[i][2] = 0.0;
+    // vatom_g3_proc[i][3] = 0.0;
+    // vatom_g3_proc[i][4] = 0.0;
+    // vatom_g3_proc[i][5] = 0.0;  
+    vatom_g3_xx[i] = 0.0;
+    vatom_g3_yy[i] = 0.0;
+    vatom_g3_zz[i] = 0.0;
+    vatom_g3_xy[i] = 0.0;
+    vatom_g3_xz[i] = 0.0;
+    vatom_g3_yz[i] = 0.0;      
+    vatom_g3_proc_xx[i] = 0.0;
+    vatom_g3_proc_yy[i] = 0.0;
+    vatom_g3_proc_zz[i] = 0.0;
+    vatom_g3_proc_xy[i] = 0.0;
+    vatom_g3_proc_xz[i] = 0.0;
+    vatom_g3_proc_yz[i] = 0.0;
   }
 
   for (is = 1; is <= n_sort; is++)
@@ -2258,6 +2333,9 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         p_Gmn[0] = 0.0;
         p_Gmn[1] = 0.0;
         p_Gmn[2] = 0.0;
+        p_Gmn[3] = 0.0;
+        p_Gmn[4] = 0.0;
+        p_Gmn[5] = 0.0;        
         for (kk = 0; kk < n_neighb; kk++)
         {
           if (kk == jj) continue;
@@ -2290,7 +2368,15 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
           w3 = Gmn_i*(r_1[jj]*r_1[kk]*(vek_z[jj] - vek_z[kk]));
           Gmn[0] += w1;
           Gmn[1] += w2;
-          Gmn[2] += w3;
+          Gmn[2] += w3; 
+
+          // for virial computation
+          p_Gmn[0] -= w1*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[1] -= w2*(vek_y[jj]-vek_y[kk]);
+          p_Gmn[2] -= w3*(vek_z[jj]-vek_z[kk]);
+          p_Gmn[3] -= w2*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[4] -= w3*(vek_x[jj]-vek_x[kk]);
+          p_Gmn[5] -= w3*(vek_y[jj]-vek_y[kk]);          
         }
 
         f_at_g3_proc_x[tag[i]-1] += Dmn*evek_x[jj];
@@ -2309,6 +2395,23 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
         // deli[1] = yy;
         // deli[2] = zz;
         // if (vflag_atom) v_tally(i, (&fi)[3], (&deli)[3]); // calculating global and per-atom virial
+        /* direct virial computation */
+        if (vflag_atom)
+        {
+          vatom_g3_proc_xx[tag[i]-1] += 0.5*Dmn*evek_x[jj]*vek_x[jj];
+          vatom_g3_proc_yy[tag[i]-1] += 0.5*Dmn*evek_y[jj]*vek_y[jj];
+          vatom_g3_proc_zz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_z[jj];
+          vatom_g3_proc_xy[tag[i]-1] += 0.5*Dmn*evek_y[jj]*vek_x[jj];
+          vatom_g3_proc_xz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_x[jj];
+          vatom_g3_proc_yz[tag[i]-1] += 0.5*Dmn*evek_z[jj]*vek_y[jj];
+
+          vatom_g3_proc_xx[tag[j]-1] += 0.5*(p_Gmn[0] + Dmn*evek_x[jj]*vek_x[jj]);
+          vatom_g3_proc_yy[tag[j]-1] += 0.5*(p_Gmn[1] + Dmn*evek_y[jj]*vek_y[jj]);
+          vatom_g3_proc_zz[tag[j]-1] += 0.5*(p_Gmn[2] + Dmn*evek_z[jj]*vek_z[jj]);
+          vatom_g3_proc_xy[tag[j]-1] += 0.5*(p_Gmn[3] + Dmn*evek_y[jj]*vek_x[jj]);
+          vatom_g3_proc_xz[tag[j]-1] += 0.5*(p_Gmn[4] + Dmn*evek_z[jj]*vek_x[jj]);
+          vatom_g3_proc_yz[tag[j]-1] += 0.5*(p_Gmn[5] + Dmn*evek_y[jj]*vek_z[jj]);          
+        }
       }
     }
     e_at[i] += e_angle;
@@ -2323,22 +2426,52 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
   MPI_Allreduce(f_at_g3_proc_y,f_at_g3_y,nglobal,MPI_DOUBLE,MPI_SUM,world); 
   MPI_Barrier(world); // waiting all MPI processes at this point
   MPI_Allreduce(f_at_g3_proc_z,f_at_g3_z,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xx,vatom_g3_xx,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_yy,vatom_g3_yy,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_zz,vatom_g3_zz,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xy,vatom_g3_xy,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_xz,vatom_g3_xz,nglobal,MPI_DOUBLE,MPI_SUM,world); 
+  MPI_Barrier(world); // waiting all MPI processes at this point
+  MPI_Allreduce(vatom_g3_proc_yz,vatom_g3_yz,nglobal,MPI_DOUBLE,MPI_SUM,world);
 
   for (i = 0; i < nlocal; i++)
   {
     f_at[i][0] += f_at_g3_x[tag[i]-1];
     f_at[i][1] += f_at_g3_y[tag[i]-1];
     f_at[i][2] += f_at_g3_z[tag[i]-1];
+    vatom[i][0] += vatom_g3_xx[tag[i]-1]; 
+    vatom[i][1] += vatom_g3_yy[tag[i]-1]; 
+    vatom[i][2] += vatom_g3_zz[tag[i]-1]; 
+    vatom[i][3] += vatom_g3_xy[tag[i]-1];
+    vatom[i][4] += vatom_g3_xz[tag[i]-1];
+    vatom[i][5] += vatom_g3_yz[tag[i]-1];
   }
 
- 
   memory->destroy(f_at_g3_proc_x);
   memory->destroy(f_at_g3_proc_y);
   memory->destroy(f_at_g3_proc_z);
   memory->destroy(f_at_g3_x);
   memory->destroy(f_at_g3_y);
   memory->destroy(f_at_g3_z);
-  
+  // memory->destroy(vatom_g3_proc);
+  // memory->destroy(vatom_g3);
+  memory->destroy(vatom_g3_proc_xx);
+  memory->destroy(vatom_g3_proc_yy);
+  memory->destroy(vatom_g3_proc_zz);
+  memory->destroy(vatom_g3_proc_xy);
+  memory->destroy(vatom_g3_proc_xz);
+  memory->destroy(vatom_g3_proc_yz);
+  memory->destroy(vatom_g3_xx);
+  memory->destroy(vatom_g3_yy);
+  memory->destroy(vatom_g3_zz);
+  memory->destroy(vatom_g3_xy);
+  memory->destroy(vatom_g3_xz);
+  memory->destroy(vatom_g3_yz);
   return;
 }
 
