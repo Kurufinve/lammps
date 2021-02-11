@@ -2125,12 +2125,12 @@ void PairLS::e_force_fi_emb(int eflag, int vflag, double *e_at, double **f_at, d
         /* direct virial computation */
         if (vflag_atom)
         {
-          vatom[i][0] += 0.5*w1*xx;
-          vatom[i][1] += 0.5*w2*yy;
-          vatom[i][2] += 0.5*w3*zz;
-          vatom[i][3] += 0.5*w2*xx;
-          vatom[i][4] += 0.5*w3*xx;
-          vatom[i][5] += 0.5*w3*yy;
+          vatom[i][0] += -0.5*w1*xx;
+          vatom[i][1] += -0.5*w2*yy;
+          vatom[i][2] += -0.5*w3*zz;
+          vatom[i][3] += -0.5*w2*xx;
+          vatom[i][4] += -0.5*w3*xx;
+          vatom[i][5] += -0.5*w3*yy;
         }
       }
     }
@@ -2444,12 +2444,12 @@ void PairLS::e_force_g3(int eflag, int vflag, double *e_at, double **f_at, doubl
     f_at[i][0] += f_at_g3_x[tag[i]-1];
     f_at[i][1] += f_at_g3_y[tag[i]-1];
     f_at[i][2] += f_at_g3_z[tag[i]-1];
-    vatom[i][0] += vatom_g3_xx[tag[i]-1]; 
-    vatom[i][1] += vatom_g3_yy[tag[i]-1]; 
-    vatom[i][2] += vatom_g3_zz[tag[i]-1]; 
-    vatom[i][3] += vatom_g3_xy[tag[i]-1];
-    vatom[i][4] += vatom_g3_xz[tag[i]-1];
-    vatom[i][5] += vatom_g3_yz[tag[i]-1];
+    vatom[i][0] += -vatom_g3_xx[tag[i]-1]; 
+    vatom[i][1] += -vatom_g3_yy[tag[i]-1]; 
+    vatom[i][2] += -vatom_g3_zz[tag[i]-1]; 
+    vatom[i][3] += -vatom_g3_xy[tag[i]-1];
+    vatom[i][4] += -vatom_g3_xz[tag[i]-1];
+    vatom[i][5] += -vatom_g3_yz[tag[i]-1];
   }
 
   memory->destroy(f_at_g3_proc_x);
