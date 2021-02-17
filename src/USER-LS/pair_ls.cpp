@@ -12,7 +12,9 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: Alexey Lipnitskiy (BSU), Daniil Poletaev (BSU) 
+   Contributing authors: 
+   Alexey Lipnitskii (Belgorod State University, Russia) - original fortran code, 
+   Daniil Poletaev (Belgorod State University, Russia) - c/c++ implementation for LAMMPS.
 ------------------------------------------------------------------------- */
 
 #include "pair_ls.h"
