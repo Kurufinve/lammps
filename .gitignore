@@ -38,6 +38,7 @@ vgcore.*
 ehthumbs.db
 Thumbs.db
 .clang-format
+.lammps_history
 
 #cmake
 /cmake/out*
